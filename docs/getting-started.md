@@ -18,7 +18,7 @@ to install and nothing to orchestrate.
 ## Build and run
 
 ```bash
-git clone https://github.com/enowdev/antares.git
+git clone https://github.com/pandamoon21/antares.git
 cd antares
 make install     # Go modules, Air, dashboard packages
 make build       # one binary with the dashboard inside it

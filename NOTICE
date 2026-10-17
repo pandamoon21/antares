@@ -1,6 +1,20 @@
 Antares
 Copyright 2026 enowdev
+Copyright 2026 the Antares contributors
 
 This product includes software developed by enowdev and contributors.
 
 Licensed under the Apache License, Version 2.0 (see LICENSE).
+
+---
+
+This distribution is a community fork of the original project, which was
+published at github.com/enowdev/antares and has since been deleted.
+
+Original work remains copyright enowdev and the Antares contributors. This fork
+claims no authorship of that work and adds no restrictions on top of
+Apache-2.0.
+
+Modified files are marked as changed, and every divergence from the original
+tree is isolated in its own commit with an explanatory message. See FORK.md for
+provenance, base commit SHAs, and the list of changes.

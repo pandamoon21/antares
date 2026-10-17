@@ -24,8 +24,8 @@ antares setup        # configure it, in the browser or the terminal
 > [!NOTE]
 > **Antares is an early release.** It runs and is used daily, but the surface is
 > still moving and rough edges are expected. Bug reports, feature ideas, and
-> pull requests are all welcome — [open an issue](https://github.com/enowdev/antares/issues)
-> or [send a PR](https://github.com/enowdev/antares/pulls). See
+> pull requests are all welcome — [open an issue](https://github.com/pandamoon21/antares/issues)
+> or [send a PR](https://github.com/pandamoon21/antares/pulls). See
 > [Contributing](#contributing).
 
 Runs on **Linux**, **macOS**, and **Windows**.
@@ -73,23 +73,24 @@ troubleshooting: [docs/installation.md](docs/installation.md).
 **Linux / macOS**
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/enowdev/antares/main/scripts/install.sh | bash
+curl -fsSL https://raw.githubusercontent.com/pandamoon21/antares/main/scripts/install.sh | bash
 ```
 
 **Windows (PowerShell)**
 
 ```powershell
-irm https://raw.githubusercontent.com/enowdev/antares/main/scripts/install.ps1 | iex
+irm https://raw.githubusercontent.com/pandamoon21/antares/main/scripts/install.ps1 | iex
 ```
 
-> While the repo is private, install the [GitHub CLI](https://cli.github.com)
-> and run `gh auth login` first — the installer uses it to fetch release assets.
-> Once the repo is public this is not needed.
+> **This is a community fork.** The upstream repository `enowdev/antares` and
+> its owner account were deleted in September 2026. This fork preserves the full
+> commit history and is the most complete surviving tree. See
+> [FORK.md](FORK.md) for exact provenance, base commits, and what was merged.
 
 **From source** (to develop, or run an unreleased commit — needs Go 1.26+, Bun/npm, git):
 
 ```bash
-git clone https://github.com/enowdev/antares.git
+git clone https://github.com/pandamoon21/antares.git
 cd antares
 make install          # Go modules, Air, frontend packages
 make build            # single binary with the dashboard embedded
@@ -365,6 +366,34 @@ credentials, and RAG backend in one pass.
 
 ---
 
+## About this fork
+
+Antares was originally published at `github.com/enowdev/antares` by **Enow Dev**.
+That repository and its owner account were deleted in September 2026, which also
+deleted the canonical fork list.
+
+This fork, [`pandamoon21/antares`](https://github.com/pandamoon21/antares),
+reconstructs the most complete and most recent surviving state by joining the
+two longest-lived branches that diverged after the deletion:
+
+| Source | Commits | What it contributed |
+|---|---|---|
+| `DevKuroX/antares` | 415 | Complete upstream history plus seven ChatUI design and planning documents |
+| `elliottophellia/antares` | 451 | The newest surviving tree: Content Creator, custom provider headers, skill discovery, macOS/Windows daemon work |
+
+All 451 commits of the newer branch are preserved in this repository's history,
+on top of the original project history. Base commit SHAs and the exact conflict
+resolutions are recorded in [FORK.md](FORK.md).
+
+If you are the original author and want this fork promoted, redirected, or
+removed, open an issue and it will be handled promptly.
+
+Upstream documentation and the original project site
+(`antares.enowx.ai`) may still reference the deleted repository; treat the
+install commands in this README as authoritative for this fork.
+
+---
+
 ## Documentation
 
 | Guide | What it covers |
@@ -399,10 +428,10 @@ credentials, and RAG backend in one pass.
 Antares is an **early release** and actively worked on — contributions are
 welcome.
 
-- **Bugs & ideas:** [open an issue](https://github.com/enowdev/antares/issues).
+- **Bugs & ideas:** [open an issue](https://github.com/pandamoon21/antares/issues).
   Include what you ran, what happened, and `antares doctor` output where it
   helps.
-- **Pull requests:** [send one](https://github.com/enowdev/antares/pulls). Run
+- **Pull requests:** [send one](https://github.com/pandamoon21/antares/pulls). Run
   `make check` (go vet + tests + tsc) before pushing; for dashboard changes,
   `make smoke` loads every route in a real browser.
 - **Scope:** the interface is still moving, so for anything large it is worth

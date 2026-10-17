@@ -19,18 +19,17 @@ inside it. After install, every command works from anywhere on your PATH:
 
 Open a new terminal after installing so the PATH change is picked up.
 
-> **Early release, private repo.** While the repository is private, release
-> assets are not publicly downloadable. Install the
-> [GitHub CLI](https://cli.github.com) and run `gh auth login` once — the
-> installer uses it automatically. When the repo goes public this step goes
-> away and the plain URL download just works.
+> **Early release.** Release assets are downloaded straight from GitHub
+> Releases, so no authentication is needed. The [GitHub CLI](https://cli.github.com)
+> is used automatically when installed and authenticated, which helps for
+> private mirrors or when the API is rate-limiting you.
 
 ## One-line install
 
 ### Linux / macOS
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/enowdev/antares/main/scripts/install.sh | bash
+curl -fsSL https://raw.githubusercontent.com/pandamoon21/antares/main/scripts/install.sh | bash
 ```
 
 Installs to `~/.local/bin/antares` and adds that directory to your PATH (in
@@ -48,7 +47,7 @@ curl -fsSL .../install.sh | ANTARES_NO_MODIFY_PATH=1 bash
 ### Windows (PowerShell)
 
 ```powershell
-irm https://raw.githubusercontent.com/enowdev/antares/main/scripts/install.ps1 | iex
+irm https://raw.githubusercontent.com/pandamoon21/antares/main/scripts/install.ps1 | iex
 ```
 
 Installs to `%LOCALAPPDATA%\Antares\bin\antares.exe` and adds it to your user
@@ -82,7 +81,7 @@ You only need this to develop Antares or to run an unreleased commit. It needs
 **Bun or npm**, and **git**.
 
 ```bash
-git clone https://github.com/enowdev/antares.git
+git clone https://github.com/pandamoon21/antares.git
 cd antares
 make install       # toolchain deps (Go modules, Air, dashboard packages)
 make build         # → ./bin/antares (dashboard embedded)
@@ -118,9 +117,10 @@ Remove-Item -Recurse "$env:USERPROFILE\.antares"   # optional
 
 ## Troubleshooting
 
-- **`no asset … in release` / download fails** — the repo is likely still
-  private. Install the [GitHub CLI](https://cli.github.com), run
-  `gh auth login`, and re-run the installer.
+- **`no asset ... in release` / download fails** - no release carries that
+  asset yet. Pin a published version with `ANTARES_VERSION`, or build from
+  source (see above). If the GitHub API is rate-limiting you, install the
+  [GitHub CLI](https://cli.github.com) and run `gh auth login`.
 - **`antares: command not found` after install** — the install dir is not on
   your PATH. The installer prints the line to add; on Windows, open a new
   terminal.
@@ -131,4 +131,4 @@ Remove-Item -Recurse "$env:USERPROFILE\.antares"   # optional
   `Set-ExecutionPolicy -Scope Process -ExecutionPolicy Bypass`, then re-run.
 
 Found a rough edge? This is an early release — please
-[open an issue](https://github.com/enowdev/antares/issues) or send a PR.
+[open an issue](https://github.com/pandamoon21/antares/issues) or send a PR.
