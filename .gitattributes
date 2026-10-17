@@ -1,3 +1,12 @@
 # Generated files — collapse in GitHub diffs by default and skip from
 # linguist language stats. Regenerate with `make sync-models`.
 internal/providers/models_generated.json linguist-generated=true
+
+# Shell scripts must stay LF even on a Windows checkout with core.autocrlf
+# enabled: bash aborts on a CRLF shebang ("syntax error near unexpected token
+# `$'in\r''") and the piped installers would be unusable as published.
+*.sh text eol=lf
+*.bash text eol=lf
+Makefile text eol=lf
+Dockerfile text eol=lf
+*.ps1 text eol=crlf

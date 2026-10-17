@@ -7,22 +7,23 @@
   Releases and installs it. No build tools required.
 
 .EXAMPLE
-  irm https://raw.githubusercontent.com/enowdev/antares/main/scripts/install.ps1 | iex
+  irm https://raw.githubusercontent.com/pandamoon21/antares/main/scripts/install.ps1 | iex
 
 .NOTES
   Env knobs (set before running):
     $env:ANTARES_PREFIX    install dir; default $env:LOCALAPPDATA\Antares
     $env:ANTARES_VERSION   specific release tag; default latest
-    $env:ANTARES_REPO      owner/name; default enowdev/antares
+    $env:ANTARES_REPO      owner/name; default pandamoon21/antares
 
-  While the repository is private, releases are not publicly downloadable.
-  Install the GitHub CLI (https://cli.github.com), run 'gh auth login', and this
-  script uses it automatically. Once the repo is public, no auth is needed.
+  This is the maintained fork of the deleted enowdev/antares project. See
+  FORK.md for provenance. The GitHub CLI is optional: when present it is used
+  (useful for private mirrors or to dodge API rate limits), otherwise this
+  script talks to the public GitHub API and release URLs.
 #>
 
 $ErrorActionPreference = 'Stop'
 
-$Repo    = if ($env:ANTARES_REPO)    { $env:ANTARES_REPO }    else { 'enowdev/antares' }
+$Repo    = if ($env:ANTARES_REPO)    { $env:ANTARES_REPO }    else { 'pandamoon21/antares' }
 $Version = if ($env:ANTARES_VERSION) { $env:ANTARES_VERSION } else { 'latest' }
 $Prefix  = if ($env:ANTARES_PREFIX)  { $env:ANTARES_PREFIX }  else { Join-Path $env:LOCALAPPDATA 'Antares' }
 $BinDir  = Join-Path $Prefix 'bin'
@@ -59,14 +60,21 @@ if (Have 'gh') {
   gh release download $ver --repo $Repo --pattern $asset --output $tmp --clobber
   if (-not (Test-Path $tmp)) { Die "no asset '$asset' in release $ver." }
 } else {
-  if ($Version -eq 'latest') {
-    Die "without the GitHub CLI you must pass a version, e.g. `$env:ANTARES_VERSION='v0.1.0'. (If the repo is still private, install gh from https://cli.github.com and run 'gh auth login'.)"
+  $ver = $Version
+  if ($ver -eq 'latest') {
+    # Assets are named antares_<version>_..., so resolve the tag first.
+    $api = "https://api.github.com/repos/$Repo/releases/latest"
+    try {
+      $rel = Invoke-RestMethod -Uri $api -UseBasicParsing -Headers @{ 'User-Agent' = 'antares-installer' }
+      $ver = $rel.tag_name
+    } catch { $ver = $null }
+    if (-not $ver) { Die "could not resolve the latest release for $Repo (no public releases yet?). Pass one explicitly: `$env:ANTARES_VERSION='v0.3.0'" }
   }
-  $asset = AssetFor $Version
-  $url = "https://github.com/$Repo/releases/download/$Version/$asset"
+  $asset = AssetFor $ver
+  $url = "https://github.com/$Repo/releases/download/$ver/$asset"
   Info "downloading $url"
   try { Invoke-WebRequest -Uri $url -OutFile $tmp -UseBasicParsing }
-  catch { Die "download failed. If the repo is still private, install the GitHub CLI (gh) and run 'gh auth login', then re-run." }
+  catch { Die "download failed for $asset. Check the release carries that asset, or pass `$env:ANTARES_VERSION explicitly." }
 }
 
 if (-not (Test-Path $tmp) -or (Get-Item $tmp).Length -eq 0) { Die "downloaded file is empty." }
@@ -80,7 +88,7 @@ try { & $dest --version } catch {}
 $userPath = [Environment]::GetEnvironmentVariable('Path','User')
 if ($userPath -notlike "*$BinDir*") {
   [Environment]::SetEnvironmentVariable('Path', "$userPath;$BinDir", 'User')
-  Warn "added $BinDir to your user PATH — open a NEW terminal for it to take effect."
+  Warn "added $BinDir to your user PATH - open a NEW terminal for it to take effect."
 } else {
   Info "run 'antares' from anywhere (open a new terminal if not found yet)"
 }

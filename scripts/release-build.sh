@@ -26,9 +26,25 @@ GO="${GO:-go}"
 BUN="${BUN:-bun}"
 OUT="dist/release"
 
-VERSION="${VERSION:-$(git describe --tags --always --dirty 2>/dev/null || echo 0.1.0-dev)}"
+VERSION="${VERSION:-$(git describe --tags --exact-match 2>/dev/null || echo "")}"
 COMMIT="$(git rev-parse --short HEAD 2>/dev/null || echo dev)"
 DATE="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+
+
+# An untagged commit yields a describe string like v0.3.0-233-g2d95bdf. That is
+# fine for local builds but must never become a published tag: the installers
+# build asset names from the tag, so a dotted describe string produces filenames
+# no one can request by version later. Require an exact tag, or an explicit
+# VERSION, before cutting a release.
+if [ -z "$VERSION" ]; then
+  printf '\033[31merror:\033[0m HEAD is not exactly on a tag.\n' >&2
+  printf '       Tag the commit (git tag v0.4.0) or pass VERSION=v0.4.0 explicitly.\n' >&2
+  exit 1
+fi
+case "$VERSION" in
+  v[0-9]*) ;;
+  *) printf '\033[33mwarning:\033[0m VERSION "%s" does not start with "v"; the installers and\n         GitHub release pages expect v-prefixed tags.\n' "$VERSION" >&2 ;;
+esac
 LDFLAGS="-s -w \
   -X github.com/pandamoon21/antares/internal/version.Version=$VERSION \
   -X github.com/pandamoon21/antares/internal/version.Commit=$COMMIT \

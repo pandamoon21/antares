@@ -5,20 +5,21 @@
 # GitHub Releases and installs it. No build tools required.
 #
 # Usage:
-#   curl -fsSL https://raw.githubusercontent.com/enowdev/antares/main/scripts/install.sh | bash
+#   curl -fsSL https://raw.githubusercontent.com/pandamoon21/antares/main/scripts/install.sh | bash
 #
 # Env knobs:
 #   PREFIX=/usr/local     install dir root (binary lands in $PREFIX/bin); default ~/.local
 #   ANTARES_VERSION=v0.1.0  install a specific release; default: latest
-#   ANTARES_REPO=owner/name GitHub repo; default enowdev/antares
+#   ANTARES_REPO=owner/name GitHub repo; default pandamoon21/antares
 #
-# While the repository is private, releases are not publicly downloadable. Have
-# the GitHub CLI installed and authenticated (`gh auth login`); this script uses
-# it automatically when present. Once the repo is public, no auth is needed.
+# This is the maintained fork of the deleted enowdev/antares project. See
+# FORK.md for provenance. The gh CLI is optional: when present it is used
+# (useful for private mirrors or to dodge API rate limits), otherwise curl
+# talks to the public GitHub API and release URLs.
 
 set -euo pipefail
 
-REPO="${ANTARES_REPO:-enowdev/antares}"
+REPO="${ANTARES_REPO:-pandamoon21/antares}"
 VERSION="${ANTARES_VERSION:-latest}"
 PREFIX="${PREFIX:-$HOME/.local}"
 BINDIR="$PREFIX/bin"
@@ -63,22 +64,21 @@ if have gh; then
     || die "no asset '$asset' in release $ver. Available assets: $(gh release view "$ver" --repo "$REPO" --json assets -q '.assets[].name' | tr '\n' ' ')"
 else
   have curl || die "need curl (or the gh CLI) to download."
-  if [ "$VERSION" = "latest" ]; then
-    base="https://github.com/$REPO/releases/latest/download"
-    # The 'latest' redirect does not know the version, so try the unversioned
-    # name first; release-build.sh embeds the version, so also expose a stable
-    # alias if you upload one. Otherwise pass ANTARES_VERSION explicitly.
-    ver=""
-  else
-    ver="$VERSION"
-    base="https://github.com/$REPO/releases/download/$ver"
+  ver="$VERSION"
+  if [ "$ver" = "latest" ]; then
+    # Release assets are named antares_<version>_..., so the version has to be
+    # known before the URL can be built. Ask the GitHub API for the latest tag;
+    # the /releases/latest/download redirect only works for constant filenames.
+    api="https://api.github.com/repos/$REPO/releases/latest"
+    ver="$(curl -fsSL ${GITHUB_TOKEN:+-H "Authorization: Bearer $GITHUB_TOKEN"} "$api" 2>/dev/null \
+      | sed -n 's/.*"tag_name"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' | head -n1)"
+    [ -n "$ver" ] || die "could not resolve the latest release for $REPO (no releases yet?). Pass one explicitly: ANTARES_VERSION=v0.3.0"
   fi
-  [ -n "$ver" ] || die "without the gh CLI you must pass a version, e.g. ANTARES_VERSION=v0.1.0 (the repo may still be private, in which case install the gh CLI and run 'gh auth login')"
   asset="$(asset_for "$ver")"
-  url="$base/$asset"
+  url="https://github.com/$REPO/releases/download/$ver/$asset"
   info "downloading $url"
-  curl -fsSL "$url" -o "$dest" \
-    || die "download failed. If the repo is still private, install the GitHub CLI (gh) and run 'gh auth login', then re-run."
+  curl -fsSL ${GITHUB_TOKEN:+-H "Authorization: Bearer $GITHUB_TOKEN"} "$url" -o "$dest" \
+    || die "download failed for $asset. Check the release exists and carries that asset, or pass ANTARES_VERSION explicitly."
 fi
 
 [ -s "$dest" ] || die "downloaded file is empty."
