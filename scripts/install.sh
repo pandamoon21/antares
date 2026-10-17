@@ -70,9 +70,12 @@ else
     # known before the URL can be built. Ask the GitHub API for the latest tag;
     # the /releases/latest/download redirect only works for constant filenames.
     api="https://api.github.com/repos/$REPO/releases/latest"
-    ver="$(curl -fsSL ${GITHUB_TOKEN:+-H "Authorization: Bearer $GITHUB_TOKEN"} "$api" 2>/dev/null \
-      | sed -n 's/.*"tag_name"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' | head -n1)"
-    [ -n "$ver" ] || die "could not resolve the latest release for $REPO (no releases yet?). Pass one explicitly: ANTARES_VERSION=v0.3.0"
+    # `curl -f` exits 22 on a 404 (no releases yet). Under `set -e` that aborts
+    # the script before the explanatory `die` below can run, so the failure is
+    # expected here and the exit code is checked explicitly.
+    resp="$(curl -sSL ${GITHUB_TOKEN:+-H "Authorization: Bearer $GITHUB_TOKEN"} "$api" 2>/dev/null || true)"
+    ver="$(printf '%s' "$resp" | sed -n 's/.*"tag_name"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' | head -n1)"
+    [ -n "$ver" ] || die "could not resolve the latest release for $REPO (no releases published yet?). Pin a version explicitly: ANTARES_VERSION=v0.3.0"
   fi
   asset="$(asset_for "$ver")"
   url="https://github.com/$REPO/releases/download/$ver/$asset"
