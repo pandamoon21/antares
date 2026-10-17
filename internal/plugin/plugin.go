@@ -26,7 +26,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/DevKuroX/antares/internal/textutil"
+	"github.com/pandamoon21/antares/internal/textutil"
 	"gopkg.in/yaml.v3"
 )
 

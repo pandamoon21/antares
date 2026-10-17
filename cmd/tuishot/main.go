@@ -8,7 +8,7 @@ import (
 	"github.com/charmbracelet/lipgloss"
 	"github.com/muesli/termenv"
 
-	"github.com/DevKuroX/antares/internal/tui"
+	"github.com/pandamoon21/antares/internal/tui"
 )
 
 func main() {

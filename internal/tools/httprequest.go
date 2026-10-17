@@ -11,7 +11,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/DevKuroX/antares/internal/config"
+	"github.com/pandamoon21/antares/internal/config"
 	"github.com/sardanioss/httpcloak"
 )
 

@@ -9,11 +9,11 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/DevKuroX/antares/internal/agent"
-	"github.com/DevKuroX/antares/internal/config"
-	"github.com/DevKuroX/antares/internal/mcp"
-	"github.com/DevKuroX/antares/internal/skills"
-	"github.com/DevKuroX/antares/internal/store"
+	"github.com/pandamoon21/antares/internal/agent"
+	"github.com/pandamoon21/antares/internal/config"
+	"github.com/pandamoon21/antares/internal/mcp"
+	"github.com/pandamoon21/antares/internal/skills"
+	"github.com/pandamoon21/antares/internal/store"
 )
 
 // Surface is where a command was typed. Some commands only make sense in one
@@ -79,6 +79,11 @@ type Input struct {
 	// SessionID is the conversation the command was typed in, when there is one.
 	SessionID string
 	Surface   Surface
+	// Platform and ChannelID identify a messaging-gateway origin (e.g. discord,
+	// telegram), so a command that starts unattended work — an autonomous goal —
+	// can record where to deliver its results. Empty for web and the CLI.
+	Platform  string
+	ChannelID string
 }
 
 type entry struct {

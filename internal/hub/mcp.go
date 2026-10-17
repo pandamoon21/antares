@@ -6,7 +6,7 @@ import (
 	"os"
 	"strings"
 
-	"github.com/DevKuroX/antares/internal/config"
+	"github.com/pandamoon21/antares/internal/config"
 )
 
 // SearchMCP finds MCP servers in the catalogue, marking the ones already

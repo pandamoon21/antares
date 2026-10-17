@@ -13,15 +13,15 @@ import (
 	"sync"
 	"time"
 
-	"github.com/DevKuroX/antares/internal/checkpoint"
-	"github.com/DevKuroX/antares/internal/engagement"
-	"github.com/DevKuroX/antares/internal/findings"
-	"github.com/DevKuroX/antares/internal/llm"
-	"github.com/DevKuroX/antares/internal/plugin"
-	"github.com/DevKuroX/antares/internal/roleperf"
-	"github.com/DevKuroX/antares/internal/roles"
-	"github.com/DevKuroX/antares/internal/store"
-	"github.com/DevKuroX/antares/internal/tools"
+	"github.com/pandamoon21/antares/internal/checkpoint"
+	"github.com/pandamoon21/antares/internal/engagement"
+	"github.com/pandamoon21/antares/internal/findings"
+	"github.com/pandamoon21/antares/internal/llm"
+	"github.com/pandamoon21/antares/internal/plugin"
+	"github.com/pandamoon21/antares/internal/roleperf"
+	"github.com/pandamoon21/antares/internal/roles"
+	"github.com/pandamoon21/antares/internal/store"
+	"github.com/pandamoon21/antares/internal/tools"
 )
 
 // The harness is everything around the model call that makes a long run
@@ -109,6 +109,12 @@ func (r *repeatTracker) record(calls []llm.ToolCall) []string {
 }
 
 func processObservation(c llm.ToolCall) bool {
+	if c.Name == "content_creator" {
+		var args struct {
+			Action string `json:"action"`
+		}
+		return json.Unmarshal([]byte(c.Arguments), &args) == nil && args.Action == "poll_video"
+	}
 	if c.Name != "process" {
 		return false
 	}
@@ -267,6 +273,38 @@ type Goal struct {
 	Paused     bool   `json:"paused"`
 	Done       bool   `json:"done"`
 	Note       string `json:"note,omitempty"`
+
+	// Autonomous marks a "confident" goal: instead of ending the turn and
+	// waiting for the user after each judge step, the agent keeps starting new
+	// turns on its own until the goal is met, the cap is reached, or it hits a
+	// blocker only the user can clear. Opt-in (via `/goal auto`) because it
+	// spends tokens unattended. Normal goals leave this false and behave as
+	// before.
+	Autonomous bool `json:"autonomous,omitempty"`
+	// StuckCount rises each time the judge asks for the same next step again (or
+	// the same step keeps failing). It drives tiered escalation: the higher it
+	// climbs, the harder the agent is pushed to change tactics — read the docs,
+	// search the web/tutorials, then delegate a research sub-agent. Reset to 0
+	// whenever the next step actually changes (progress was made).
+	StuckCount int `json:"stuck_count,omitempty"`
+	// LastNext is the previous judge next-step, used to detect "stuck" (the same
+	// instruction coming back unchanged).
+	LastNext string `json:"last_next,omitempty"`
+	// Platform and ChannelID record where an autonomous goal was started from a
+	// messaging gateway, so its auto-continued turns can be delivered back to
+	// that chat rather than only the dashboard. Empty for web/CLI goals.
+	Platform  string `json:"platform,omitempty"`
+	ChannelID string `json:"channel_id,omitempty"`
+}
+
+// autonomousMax returns the iteration cap for an autonomous goal: the goal's
+// own Max if set, else the configured default. A cap of 0 means unlimited — the
+// loop runs until the goal is met or the user stops it.
+func (a *Agent) autonomousMax(g *Goal) int {
+	if g.Max != 0 {
+		return g.Max
+	}
+	return a.config().Agent.GoalAutonomousMaxIterations
 }
 
 func goalKey(sessionID string) string { return "goal:" + sessionID }
@@ -305,19 +343,30 @@ func (a *Agent) SetGoal(ctx context.Context, sessionID string, g *Goal) error {
 const judgePrompt = `You are judging whether a standing goal has been met.
 
 You will see the goal and what the assistant just did and said. Decide whether
-the goal is now complete, or whether there is a concrete next step left.
+the goal is now complete, whether there is a concrete next step left, or whether
+progress is blocked on something only the user can provide.
 
 Be honest: a plan is not completion, and an intention to do something is not
 doing it. But do not invent extra work — if the goal is met, say so.
 
+Only set "blocked" when the goal genuinely cannot advance without the user — a
+missing secret or credential, an ambiguous requirement, or an irreversible
+choice that is theirs to make. A hard technical problem is NOT a blocker: the
+assistant can read documentation, search the web, or try another approach, so
+keep "blocked" false and give a next step instead.
+
 Reply with JSON and nothing else:
 {"done": true}
 or
-{"done": false, "next": "<one specific instruction for the next step>"}`
+{"done": false, "next": "<one specific instruction for the next step>"}
+or
+{"done": false, "blocked": true, "needs": "<exactly what you need from the user>"}`
 
 type judgement struct {
-	Done bool   `json:"done"`
-	Next string `json:"next"`
+	Done    bool   `json:"done"`
+	Next    string `json:"next"`
+	Blocked bool   `json:"blocked"`
+	Needs   string `json:"needs"`
 }
 
 // judgeGoal decides whether a standing goal is finished, and what to do next
@@ -352,8 +401,8 @@ func (a *Agent) judgeGoal(ctx context.Context, g *Goal, reply string, transcript
 	if json.Unmarshal([]byte(extractJSON(resp.Content)), &j) != nil {
 		return judgement{Done: true}
 	}
-	if !j.Done && strings.TrimSpace(j.Next) == "" {
-		// "Not done" with nothing to do next is the same as done.
+	if !j.Done && !j.Blocked && strings.TrimSpace(j.Next) == "" {
+		// "Not done" with nothing to do next and no blocker is the same as done.
 		return judgement{Done: true}
 	}
 	return j
@@ -500,6 +549,31 @@ func guardrailContinueMessage(open int) string {
 		"Continue until every task is completed.", open)
 }
 
+// stuckEscalation returns extra guidance to append to the next-step instruction
+// when a confident goal keeps getting the same next step back — i.e. it is not
+// making progress. It escalates by tier: first change tactics, then read the
+// docs and search the web/tutorials, then delegate a research sub-agent. An
+// empty string means "not stuck, no extra push needed".
+func stuckEscalation(stuck int) string {
+	switch {
+	case stuck <= 0:
+		return ""
+	case stuck == 1:
+		return "\n\nYou have tried this and it is not working. Do NOT repeat the same step. " +
+			"Step back and try a genuinely different approach — a different command, tool, or angle on the problem."
+	case stuck == 2:
+		return "\n\nYou are still stuck. Stop guessing and gather information first: " +
+			"read the relevant documentation (read_document / web_fetch on the official docs), " +
+			"search the web for how others solved this exact error or task (web_search for the error text or a tutorial), " +
+			"then apply what you learn. Report the specific thing you found before retrying."
+	default:
+		return "\n\nThis has been stuck for several rounds. Change strategy substantially: " +
+			"delegate a focused research sub-agent (delegate_task) to investigate the blocker and come back with a concrete method, " +
+			"or break the goal into a smaller intermediate step you CAN complete now and build from there. " +
+			"Do not keep repeating an approach that has already failed."
+	}
+}
+
 func (a *Agent) followUp(
 	ctx context.Context,
 	req Request,
@@ -533,17 +607,28 @@ func (a *Agent) followUp(
 	if !hasGoal || goal == nil {
 		return ""
 	}
-	maxIter := goal.Max
-	if maxIter <= 0 {
-		maxIter = a.config().Agent.GoalMaxIterations
+	// Iteration cap. A normal goal falls back to GoalMaxIterations (default 10).
+	// A confident autonomous goal uses its own cap, where 0 means UNLIMITED — it
+	// runs until met or the user stops it. Non-autonomous goals never treat 0 as
+	// unlimited.
+	unlimited := false
+	var maxIter int
+	if goal.Autonomous {
+		maxIter = a.autonomousMax(goal)
+		unlimited = maxIter <= 0
+	} else {
+		maxIter = goal.Max
+		if maxIter <= 0 {
+			maxIter = a.config().Agent.GoalMaxIterations
+		}
+		if maxIter <= 0 {
+			maxIter = 10
+		}
 	}
-	if maxIter <= 0 {
-		maxIter = 10
-	}
-	if goal.Iterations >= maxIter || *judged >= maxIter {
+	if !unlimited && (goal.Iterations >= maxIter || *judged >= maxIter) {
 		_ = emit(Event{Type: EventNotice, Message: "goal paused: iteration limit reached"})
 		goal.Paused = true
-		goal.Note = "Paused after reaching the iteration limit."
+		goal.Note = "Paused after reaching the iteration limit. Resume with /goal resume."
 		_ = a.SetGoal(ctx, sess.ID, goal)
 		return ""
 	}
@@ -554,13 +639,48 @@ func (a *Agent) followUp(
 	if j.Done {
 		goal.Done = true
 		goal.Note = "Met."
+		goal.StuckCount = 0
 		_ = a.SetGoal(ctx, sess.ID, goal)
 		_ = emit(Event{Type: EventNotice, Message: "goal met"})
 		return ""
 	}
+
+	// Genuinely blocked on the user: pause rather than loop forever on the
+	// impossible. This is the one place a confident goal stops on its own — for
+	// something only the user can resolve — instead of grinding tokens.
+	if j.Blocked {
+		needs := strings.TrimSpace(j.Needs)
+		if needs == "" {
+			needs = "input only you can provide"
+		}
+		goal.Paused = true
+		goal.Note = "Paused — needs you: " + needs
+		goal.StuckCount = 0
+		_ = a.SetGoal(ctx, sess.ID, goal)
+		_ = emit(Event{Type: EventNotice, Message: "goal paused — needs you: " + needs})
+		return ""
+	}
+
+	// Stuck detection: the judge asking for the same next step again means no
+	// progress was made. Bump the counter; reset it when the step changes.
+	next := strings.TrimSpace(j.Next)
+	if next != "" && next == strings.TrimSpace(goal.LastNext) {
+		goal.StuckCount++
+	} else {
+		goal.StuckCount = 0
+	}
+	goal.LastNext = next
+
+	instruction := "The standing goal is not met yet. " + next
+	if goal.Autonomous {
+		if esc := stuckEscalation(goal.StuckCount); esc != "" {
+			instruction += esc
+			_ = emit(Event{Type: EventNotice, Message: fmt.Sprintf("goal: stuck (%d) — escalating approach", goal.StuckCount)})
+		}
+	}
 	_ = a.SetGoal(ctx, sess.ID, goal)
-	_ = emit(Event{Type: EventNotice, Message: "goal: " + j.Next})
-	return "The standing goal is not met yet. " + j.Next
+	_ = emit(Event{Type: EventNotice, Message: "goal: " + next})
+	return instruction
 }
 
 // ---- checkpoints -------------------------------------------------------------
@@ -623,20 +743,37 @@ func (a *Agent) PruneCheckpoints(olderThan time.Duration) (int, error) {
 // ---- plugins -----------------------------------------------------------------
 
 // SetPlugins attaches the plugin manager. Passing nil disables hooks.
-func (a *Agent) SetPlugins(m *plugin.Manager) { a.plugins = m }
+// Publishes under servicesMu so a concurrent reader always sees a consistent
+// pointer during a live reload.
+func (a *Agent) SetPlugins(m *plugin.Manager) {
+	a.servicesMu.Lock()
+	a.plugins = m
+	a.servicesMu.Unlock()
+}
 
 // SetSocialBrowser attaches the persistent social media browser manager.
 func (a *Agent) SetSocialBrowser(m tools.SocialBrowserManager) { a.socialBrowser = m }
 
-// Plugins exposes the manager, or nil when none is attached.
-func (a *Agent) Plugins() *plugin.Manager { return a.plugins }
+// Plugins exposes the manager, or nil when none is attached. Callers must
+// reuse the returned pointer for the whole operation rather than re-reading,
+// so a concurrent SetPlugins cannot race a nil check against a later
+// dereference.
+func (a *Agent) Plugins() *plugin.Manager {
+	a.servicesMu.RLock()
+	m := a.plugins
+	a.servicesMu.RUnlock()
+	return m
+}
 
 // notifyPlugins sends an event that has no reply worth acting on.
 func (a *Agent) notifyPlugins(ctx context.Context, p plugin.Payload) {
-	if a.plugins == nil {
+	// Snapshot once: a concurrent SetPlugins between the nil check and the
+	// Dispatch would otherwise race a nil deref.
+	mgr := a.Plugins()
+	if mgr == nil {
 		return
 	}
-	a.plugins.Dispatch(ctx, p)
+	mgr.Dispatch(ctx, p)
 }
 
 // ---- multi-model panel -------------------------------------------------------
@@ -752,20 +889,35 @@ func (a *Agent) Panel(ctx context.Context, question string, models []string, emi
 
 // ---- roles -------------------------------------------------------------------
 
-// SetRoles attaches the role registry.
-func (a *Agent) SetRoles(r *roles.Registry) { a.roles = r }
+// SetRoles attaches the role registry. Publishes under servicesMu so a
+// concurrent reader always sees a consistent pointer during a live reload.
+func (a *Agent) SetRoles(r *roles.Registry) {
+	a.servicesMu.Lock()
+	a.roles = r
+	a.servicesMu.Unlock()
+}
 
-// Roles exposes the registry.
-func (a *Agent) Roles() *roles.Registry { return a.roles }
+// Roles exposes the registry. Callers must reuse the returned pointer for
+// the whole operation rather than re-reading, so a concurrent SetRoles cannot
+// race a nil check against a later use.
+func (a *Agent) Roles() *roles.Registry {
+	a.servicesMu.RLock()
+	r := a.roles
+	a.servicesMu.RUnlock()
+	return r
+}
 
 // applyRole folds a named role's prompt, toolset, and model into the request.
 // The role's values fill only what the request left blank, so an explicit
 // override on the request wins.
 func (a *Agent) applyRole(req *Request) {
-	if a.roles == nil || strings.TrimSpace(req.Role) == "" {
+	// One snapshot for the whole operation: a live SetRoles between the nil
+	// check and Get would otherwise race.
+	reg := a.Roles()
+	if reg == nil || strings.TrimSpace(req.Role) == "" {
 		return
 	}
-	role, ok := a.roles.Get(req.Role)
+	role, ok := reg.Get(req.Role)
 	if !ok {
 		return
 	}
@@ -792,10 +944,11 @@ func (a *Agent) applyRole(req *Request) {
 
 // roleInfos exposes the roles to the tools layer.
 func (a *Agent) roleInfos() []tools.RoleInfo {
-	if a.roles == nil {
+	reg := a.Roles()
+	if reg == nil {
 		return nil
 	}
-	list := a.roles.List()
+	list := reg.List()
 	out := make([]tools.RoleInfo, 0, len(list))
 	for _, r := range list {
 		out = append(out, tools.RoleInfo{

@@ -8,7 +8,7 @@ import (
 	"net/http/httptest"
 	"testing"
 
-	"github.com/DevKuroX/antares/internal/config"
+	"github.com/pandamoon21/antares/internal/config"
 )
 
 type staticIPResolver map[string][]net.IP

@@ -10,12 +10,12 @@ import (
 	"strings"
 	"time"
 
-	"github.com/DevKuroX/antares/internal/config"
-	"github.com/DevKuroX/antares/internal/gateway"
-	"github.com/DevKuroX/antares/internal/logx"
-	"github.com/DevKuroX/antares/internal/rag"
-	"github.com/DevKuroX/antares/internal/store"
-	"github.com/DevKuroX/antares/internal/tools"
+	"github.com/pandamoon21/antares/internal/config"
+	"github.com/pandamoon21/antares/internal/gateway"
+	"github.com/pandamoon21/antares/internal/logx"
+	"github.com/pandamoon21/antares/internal/rag"
+	"github.com/pandamoon21/antares/internal/store"
+	"github.com/pandamoon21/antares/internal/tools"
 )
 
 // ---- memory -----------------------------------------------------------------

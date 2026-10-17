@@ -19,19 +19,19 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/DevKuroX/antares/internal/board"
-	"github.com/DevKuroX/antares/internal/checkpoint"
-	"github.com/DevKuroX/antares/internal/config"
-	"github.com/DevKuroX/antares/internal/engagement"
-	"github.com/DevKuroX/antares/internal/findings"
-	"github.com/DevKuroX/antares/internal/llm"
-	"github.com/DevKuroX/antares/internal/plugin"
-	"github.com/DevKuroX/antares/internal/roleperf"
-	"github.com/DevKuroX/antares/internal/roles"
-	"github.com/DevKuroX/antares/internal/skills"
-	"github.com/DevKuroX/antares/internal/store"
-	"github.com/DevKuroX/antares/internal/textutil"
-	"github.com/DevKuroX/antares/internal/tools"
+	"github.com/pandamoon21/antares/internal/board"
+	"github.com/pandamoon21/antares/internal/checkpoint"
+	"github.com/pandamoon21/antares/internal/config"
+	"github.com/pandamoon21/antares/internal/engagement"
+	"github.com/pandamoon21/antares/internal/findings"
+	"github.com/pandamoon21/antares/internal/llm"
+	"github.com/pandamoon21/antares/internal/plugin"
+	"github.com/pandamoon21/antares/internal/roleperf"
+	"github.com/pandamoon21/antares/internal/roles"
+	"github.com/pandamoon21/antares/internal/skills"
+	"github.com/pandamoon21/antares/internal/store"
+	"github.com/pandamoon21/antares/internal/textutil"
+	"github.com/pandamoon21/antares/internal/tools"
 )
 
 // EventType enumerates what the agent streams to callers.
@@ -192,9 +192,28 @@ type Agent struct {
 	// resume the delegating session with the result rather than the agent
 	// polling for it. Nil until the server registers it.
 	onBgDone func(BackgroundDone)
+	// onTurnEnd is fired when a non-quiet top-level turn finishes, so a host can
+	// decide to auto-continue a confident autonomous goal without the user
+	// sending anything. Nil until a host (server / cmd) registers it.
+	onTurnEnd func(TurnEnded)
 
-	mu     sync.Mutex
-	active map[string]context.CancelFunc
+	// servicesMu guards the mutable service fields that a live reload can
+	// swap while turns are in flight: rag, skills, plugins, roles. Every read
+	// must go through the accessor (or take a snapshot under RLock) so a
+	// concurrent SetRAG/SetSkills/SetPlugins/SetRoles cannot leave a caller
+	// observing a nil-check against one value and then dereferencing another.
+	servicesMu sync.RWMutex
+
+	mu        sync.Mutex
+	active    map[string]context.CancelFunc
+	topActive int
+	// available is closed each time a top-level slot frees, so RunQueued
+	// waiters (autonomous continuations parked on a full MaxConcurrentSessions
+	// cap) can retry Prepare. Lazily made on first use by admission.go; a
+	// SetConfig that raises the cap also notifies here under a.mu so an
+	// already-parked waiter observes the new headroom without waiting for
+	// another turn to end.
+	available chan struct{}
 }
 
 // New builds an agent.
@@ -229,20 +248,63 @@ func (a *Agent) SetConfig(cfg *config.Config) {
 	if cfg == nil {
 		return
 	}
+	a.servicesMu.Lock()
+	if a.skills != nil {
+		a.skills.SetDisabled(cfg.Skills.Disabled)
+	}
+	prev := a.cfg.Load()
 	a.cfg.Store(cfg)
+	a.servicesMu.Unlock()
+	// A raised MaxConcurrentSessions makes room for parked RunQueued
+	// waiters immediately; without a wake here they would sit on the old
+	// channel until an unrelated turn ended.
+	if prev == nil || cfg.MaxConcurrentSessions == 0 || cfg.MaxConcurrentSessions > prev.MaxConcurrentSessions {
+		a.mu.Lock()
+		if a.available != nil {
+			close(a.available)
+			a.available = make(chan struct{})
+		}
+		a.mu.Unlock()
+	}
 }
 
-// SetRAG swaps the retrieval provider after a config change.
-func (a *Agent) SetRAG(p tools.RAGProvider) { a.rag = p }
+// SetRAG swaps the retrieval provider after a config change. Publishes under
+// servicesMu so a concurrent reader always sees a consistent pointer.
+func (a *Agent) SetRAG(p tools.RAGProvider) {
+	a.servicesMu.Lock()
+	a.rag = p
+	a.servicesMu.Unlock()
+}
 
-// SetSkills attaches the skill library.
-func (a *Agent) SetSkills(m *skills.Manager) { a.skills = m }
+// SetSkills attaches the skill library. Publishes under servicesMu.
+func (a *Agent) SetSkills(m *skills.Manager) {
+	a.servicesMu.Lock()
+	if cfg := a.cfg.Load(); m != nil && cfg != nil {
+		m.SetDisabled(cfg.Skills.Disabled)
+	}
+	a.skills = m
+	a.servicesMu.Unlock()
+}
 
-// Skills returns the skill library (may be nil).
-func (a *Agent) Skills() *skills.Manager { return a.skills }
+// Skills returns the skill library (may be nil). Callers must reuse the
+// returned pointer for the whole operation rather than re-reading, so a
+// concurrent SetSkills cannot race a nil check against a later dereference.
+func (a *Agent) Skills() *skills.Manager {
+	a.servicesMu.RLock()
+	m := a.skills
+	a.servicesMu.RUnlock()
+	return m
+}
 
-// RAG returns the active retrieval provider (may be nil).
-func (a *Agent) RAG() tools.RAGProvider { return a.rag }
+// RAG returns the active retrieval provider (may be nil). Callers must reuse
+// the returned value for the whole operation rather than re-reading, so a
+// concurrent SetRAG cannot race a nil check against a later use.
+func (a *Agent) RAG() tools.RAGProvider {
+	a.servicesMu.RLock()
+	p := a.rag
+	a.servicesMu.RUnlock()
+	return p
+}
 
 // Shell exposes the terminal manager for lifecycle handling.
 func (a *Agent) Shell() *tools.ShellManager { return a.shell }
@@ -279,134 +341,42 @@ func newID(prefix string) string {
 }
 
 // Run executes one user turn to completion, streaming progress through emit.
-func (a *Agent) Run(ctx context.Context, req Request, emit Emit) (*Result, error) {
+func (a *Agent) run(ctx context.Context, req Request, emit Emit) (result *Result, runErr error) {
 	if emit == nil {
 		emit = func(Event) error { return nil }
 	}
+	defer func() {
+		if recovered := recover(); recovered != nil {
+			slog.Error("agent turn panicked", "panic", recovered, "stack", string(debug.Stack()))
+			runErr = fmt.Errorf("internal error: %v", recovered)
+		}
+		if runErr == nil {
+			return
+		}
+		if !errors.Is(runErr, context.Canceled) {
+			a.reportTurnError(ctx, req, runErr, emit)
+		}
+		_ = emit(Event{Type: EventDone})
+	}()
 	cfg := a.config()
 
-	sess, err := a.resolveSession(ctx, &req)
+	prep, err := a.prepareTurn(ctx, &req, emit)
 	if err != nil {
 		return nil, err
 	}
-	// A project binding is stored on the session, so it survives across turns even
-	// though the client only sends project_dir on the first message. Backfill the
-	// request from it so the rest of the turn — write confinement and any
-	// delegated sub-agents — sees the project regardless of which turn this is.
-	if pd, _ := sess.Meta["project_dir"].(string); strings.TrimSpace(pd) != "" {
-		req.ProjectDir = pd
-		// First turn of a project that opted into RAG: index the folder into its
-		// own collection in the background. IndexRAG is only set on turn one.
-		if req.IndexRAG {
-			a.indexProject(sess.ID, pd)
-		}
-	}
+	sess := prep.sess
+	client := prep.client
+	modelName := prep.modelName
+	providerName := prep.providerName
+	history := prep.history
+	toolSpecs := prep.toolSpecs
+	byName := prep.byName
+	systemPrompt := prep.systemPrompt
+	maxTurns := prep.maxTurns
+	goal := prep.goal
+	hasGoal := prep.hasGoal
 
-	// A role folds its prompt, toolset, and model into the request. When the
-	// request names none, the session's stored role applies — set once with
-	// /role and remembered across turns. An explicit request value wins.
-	if strings.TrimSpace(req.Role) == "" && a.db != nil {
-		if stored, err := a.db.GetKV(ctx, "role:"+sess.ID); err == nil {
-			req.Role = stored
-		}
-	}
-	a.applyRole(&req)
-	if !req.Quiet {
-		if err := emit(Event{Type: EventSession, ID: sess.ID, Title: sess.Title}); err != nil {
-			return nil, err
-		}
-	}
-
-	runCtx, cancel := context.WithCancel(ctx)
-	defer cancel()
-	a.mu.Lock()
-	a.active[sess.ID] = cancel
-	a.mu.Unlock()
-	defer func() {
-		a.mu.Lock()
-		delete(a.active, sess.ID)
-		a.mu.Unlock()
-	}()
-
-	client, modelName, providerName, err := a.newClient(req.Model, sess.ID)
-	if err != nil {
-		_ = emit(Event{Type: EventError, Err: err.Error()})
-		_ = emit(Event{Type: EventDone})
-		return nil, err
-	}
-
-	history, err := a.loadHistory(ctx, sess, req)
-	if err != nil {
-		return nil, err
-	}
-
-	// Persist the user turn before calling the model so a crash mid-run does not
-	// lose it. A pure context-inject turn (no user message) skips this — the note
-	// is added just below as hidden context, so there is no empty user bubble.
-	// turnMarker groups this turn's file checkpoints under the user message that
-	// opened it, so an "edit message" rollback can revert exactly the files this
-	// turn (and later ones) changed. It is the persisted user-message id.
-	turnMarker := ""
-	hasUserMsg := strings.TrimSpace(req.Message) != "" || len(req.Images) > 0
-	if hasUserMsg {
-		userMsg := llm.Message{Role: llm.RoleUser, Content: req.Message, Parts: req.Images}
-		if !req.Quiet {
-			attachments := ""
-			if len(req.Images) > 0 {
-				if b, err := json.Marshal(req.Images); err == nil {
-					attachments = string(b)
-				}
-			}
-			turnMarker = newID("msg")
-			req.turnMarker = turnMarker
-			if err := a.db.AppendMessage(ctx, &store.Message{
-				ID: turnMarker, SessionID: sess.ID, Role: store.RoleUser,
-				Content: req.Message, Attachments: attachments,
-			}); err != nil {
-				slog.Warn("persist user message failed", "error", err)
-			}
-		}
-		history = append(history, userMsg)
-	}
-
-	// Background context (a finished sub-agent's result) is fed to the model as
-	// input so the agent resumes and acts on it, but persisted hidden so it is
-	// not rendered as a user message — the transcript shows only the agent's
-	// continuation, not an injected prompt.
-	if strings.TrimSpace(req.ContextInject) != "" {
-		history = append(history, llm.Message{Role: llm.RoleUser, Content: req.ContextInject})
-		if !req.Quiet {
-			if err := a.db.AppendMessage(ctx, &store.Message{
-				ID: newID("msg"), SessionID: sess.ID, Role: store.RoleUser,
-				Content: req.ContextInject, Hidden: true,
-			}); err != nil {
-				slog.Warn("persist context inject failed", "error", err)
-			}
-		}
-	}
-
-	activeTools := a.resolveTools(req)
-	toolSpecs := make([]llm.Tool, 0, len(activeTools))
-	byName := make(map[string]tools.Tool, len(activeTools))
-	for _, t := range activeTools {
-		toolSpecs = append(toolSpecs, llm.Tool{Name: t.Name(), Description: t.Description(), Parameters: t.Schema()})
-		byName[t.Name()] = t
-	}
-	// Sub2API Antigravity treats a tool literally named "web_search" as Google's
-	// built-in search and rejects mixing it with functionDeclarations. Rename
-	// only on the wire for those routes; execution still resolves to web_search.
-	_, prov := a.config().ResolveProvider(providerName)
-	toolSpecs, byName = sanitizeToolsForProvider(toolSpecs, byName, providerName, prov.BaseURL)
-
-	systemPrompt := a.buildSystemPrompt(ctx, req, sess, activeTools)
-
-	maxTurns := req.MaxTurns
-	if maxTurns <= 0 {
-		maxTurns = cfg.Agent.MaxTurns
-	}
-	if maxTurns <= 0 {
-		maxTurns = 50
-	}
+	runCtx := ctx
 
 	var (
 		total              llm.Usage
@@ -424,14 +394,10 @@ func (a *Agent) Run(ctx context.Context, req Request, emit Emit) (*Result, error
 	)
 	repeats := newRepeatTracker(cfg.Agent.RepeatLimit)
 	todoOpenPrev := -1 // open task count at the last nudge, to detect no progress
-	goal, hasGoal := a.GetGoal(ctx, sess.ID)
-	if hasGoal && (goal.Paused || goal.Done) {
-		hasGoal = false
-	}
 
 	for turn = 1; turn <= maxTurns; turn++ {
 		if err := runCtx.Err(); err != nil {
-			break
+			return nil, err
 		}
 		if turn > 1 {
 			if err := emit(Event{Type: EventTurn, Turn: turn}); err != nil {
@@ -476,17 +442,6 @@ func (a *Agent) Run(ctx context.Context, req Request, emit Emit) (*Result, error
 			}
 		}
 		if err != nil {
-			if errors.Is(err, context.Canceled) {
-				_ = emit(Event{Type: EventNotice, Message: "interrupted"})
-				break
-			}
-			if errors.Is(err, context.DeadlineExceeded) {
-				_ = emit(Event{Type: EventNotice, Message: "timed out"})
-				break
-			}
-			// Run owns the terminal events so callers never double-report.
-			_ = emit(Event{Type: EventError, Err: err.Error()})
-			_ = emit(Event{Type: EventDone})
 			return nil, err
 		}
 
@@ -563,6 +518,9 @@ func (a *Agent) Run(ctx context.Context, req Request, emit Emit) (*Result, error
 				})
 				continue
 			}
+			if strings.TrimSpace(resp.Content) == "" {
+				return nil, errors.New("the model returned no reply after repeated attempts")
+			}
 			break
 		}
 
@@ -574,11 +532,7 @@ func (a *Agent) Run(ctx context.Context, req Request, emit Emit) (*Result, error
 		toolCalls += len(resp.ToolCalls)
 		totalToolCalls += len(resp.ToolCalls)
 		if g := a.config().Guardrails; g.HardStopEnabled && g.AbsoluteMaxToolCalls > 0 && totalToolCalls >= g.AbsoluteMaxToolCalls {
-			_ = emit(Event{Type: EventNotice, Message: fmt.Sprintf(
-				"absolute tool-call ceiling reached (%d calls) — stopping", totalToolCalls)})
-			lastReply = fmt.Sprintf("I reached the absolute tool-call limit of %d and stopped. %s",
-				g.AbsoluteMaxToolCalls, lastReply)
-			break
+			return nil, fmt.Errorf("absolute tool-call limit reached (%d)", g.AbsoluteMaxToolCalls)
 		}
 		if a.guardrailTripped(toolCalls, emit) {
 			// The tool-call budget is a loop backstop, not a task deadline. When
@@ -612,16 +566,12 @@ func (a *Agent) Run(ctx context.Context, req Request, emit Emit) (*Result, error
 
 		// The nudge is held back rather than appended here: a user message
 		// between the assistant's tool_calls and their results is not a valid
-		// transcript, and repairing it later is no substitute for not writing
-		// it. The notice still fires now, so the user sees the repetition the
-		// moment it is detected.
+		// transcript. The notice still fires now, so the user sees the
+		// repetition the moment it is detected.
 		var repeatNudge string
 		stuck, stop := repeats.check(resp.ToolCalls)
 		if stop {
-			_ = emit(Event{Type: EventNotice, Message: "stopped: the same tool call kept repeating"})
-			lastReply = "I was repeating the same step without making progress, so I stopped. " +
-				"Tell me what to try differently."
-			break
+			return nil, errors.New("stopped because the same tool call kept repeating without progress")
 		}
 		if len(stuck) > 0 {
 			_ = emit(Event{Type: EventNotice, Message: "repeating " + strings.Join(stuck, ", ")})
@@ -658,370 +608,41 @@ func (a *Agent) Run(ctx context.Context, req Request, emit Emit) (*Result, error
 		history = appendTurnMessages(history, results, repeatNudge, notes)
 	}
 
+	if err := runCtx.Err(); err != nil {
+		return nil, err
+	}
 	if turn > maxTurns {
-		_ = emit(Event{Type: EventNotice, Message: fmt.Sprintf("turn limit reached (%d)", maxTurns)})
+		return nil, fmt.Errorf("turn limit reached (%d)", maxTurns)
 	}
 
-	if !req.Quiet {
-		a.maybeTitle(ctx, sess, req.Message, lastReply)
-		if err := emit(Event{Type: EventSession, ID: sess.ID, Title: sess.Title}); err != nil {
-			return nil, err
-		}
-		// The agent grows: if it hit tool errors but still produced a reply, it
-		// recovered — reflect on those errors in the background and keep any
-		// reusable lesson for next time.
-		if len(failures) > 0 && strings.TrimSpace(lastReply) != "" {
-			go a.learnFromErrors(context.Background(), req.Message, lastReply, failures)
-		}
-		// Fold this exchange into the conversation memory so later turns and
-		// sessions can recall it. Non-blocking, best-effort.
-		a.indexTurn(sess, req.Message, lastReply)
-		// When per-user RAG is on, also distil what this turn reveals about the
-		// gateway sender into their own collection.
-		a.indexUserTurn(req, req.Message, lastReply)
+	if err := a.finalizeTurn(ctx, req, sess, lastReply, failures, emit); err != nil {
+		return nil, err
 	}
-	_ = emit(Event{Type: EventDone})
 
 	return &Result{SessionID: sess.ID, Reply: lastReply, Turns: turn, Usage: total}, nil
 }
 
-// validateToolCallArguments catches provider streams that finish with a
-// truncated JSON argument payload. Without this check the malformed call reaches
-// the tool, fails Bind with unexpected EOF, and consumes the turn instead of
-// using the existing provider-glitch retry path.
-func validateToolCallArguments(resp *llm.Response) error {
-	if resp == nil {
-		return nil
+// ShouldAutoContinueGoal reports whether the session has a confident autonomous
+// goal that is still running (not done, not paused) and so should drive another
+// turn on its own.
+func (a *Agent) ShouldAutoContinueGoal(ctx context.Context, sessionID string) bool {
+	g, ok := a.GetGoal(ctx, sessionID)
+	if !ok {
+		return false
 	}
-	for i := range resp.ToolCalls {
-		call := &resp.ToolCalls[i]
-		if strings.TrimSpace(call.Arguments) == "" {
-			call.Arguments = "{}"
-			continue
-		}
-		var args map[string]any
-		if err := json.Unmarshal([]byte(call.Arguments), &args); err != nil {
-			return fmt.Errorf("malformed tool_call arguments for %s: %w", call.Name, err)
-		}
-	}
-	return nil
+	return g.Autonomous && !g.Done && !g.Paused
 }
 
-// callModel runs one completion, streaming when enabled.
-func (a *Agent) callModel(ctx context.Context, client llm.Client, req llm.Request, stream bool, emit Emit) (*llm.Response, error) {
-	if !stream {
-		resp, err := client.Chat(ctx, req)
-		if err != nil {
-			return nil, err
-		}
-		if resp.Reasoning != "" {
-			_ = emit(Event{Type: EventReasoning, Delta: resp.Reasoning})
-		}
-		if resp.Content != "" {
-			_ = emit(Event{Type: EventText, Delta: resp.Content})
-		}
-		return resp, nil
+// KickAutonomousGoal starts the first turn of a just-set confident goal by
+// firing the registered turn-end driver, so `/goal auto` begins working
+// immediately instead of only after some later turn. It is a no-op when no host
+// registered a driver or the goal is not an active autonomous one. Platform and
+// channelID let a gateway-set goal deliver its turns back to the right chat.
+func (a *Agent) KickAutonomousGoal(ctx context.Context, sessionID, platform, channelID string) {
+	if a.onTurnEnd == nil || !a.ShouldAutoContinueGoal(ctx, sessionID) {
+		return
 	}
-
-	return client.Stream(ctx, req, func(ev llm.Event) error {
-		switch ev.Type {
-		case llm.EventText:
-			return emit(Event{Type: EventText, Delta: ev.Delta})
-		case llm.EventReasoning:
-			if a.config().Display.ShowReasoning {
-				return emit(Event{Type: EventReasoning, Delta: ev.Delta})
-			}
-		}
-		return nil
-	})
-}
-
-type toolOutcome struct {
-	message llm.Message
-	isError bool
-}
-
-// appendTurnMessages assembles the tail of one turn: every tool result first,
-// then the repetition nudge, then any steering note. The order is the whole
-// point. A user message sitting between an assistant's tool_calls and their
-// results is not a valid transcript, and ensureToolResults repairing it at send
-// time is no reason to write it — the repair is silent, so a nudge that drifts
-// back above the results would leave every test green while the transcript we
-// build is wrong. Keeping the order in one pure function is what makes it
-// assertable without a client, a store or a server.
-func appendTurnMessages(history []llm.Message, results []toolOutcome, nudge string, notes []string) []llm.Message {
-	for _, r := range results {
-		history = append(history, r.message)
-	}
-	if nudge != "" {
-		history = append(history, llm.Message{Role: llm.RoleUser, Content: nudge})
-	}
-	for _, note := range notes {
-		history = append(history, llm.Message{
-			Role:    llm.RoleUser,
-			Content: "A new instruction arrived while you were working: " + note,
-		})
-	}
-	return history
-}
-
-// executeTools runs the requested calls, in parallel when the config allows.
-func (a *Agent) executeTools(
-	ctx context.Context,
-	calls []llm.ToolCall,
-	byName map[string]tools.Tool,
-	req Request,
-	sess *store.Session,
-	emit Emit,
-) []toolOutcome {
-	outcomes := make([]toolOutcome, len(calls))
-
-	// Emit all call announcements up front so the UI can render them in order.
-	for _, call := range calls {
-		_ = emit(Event{Type: EventToolCall, ID: call.ID, Name: call.Name, Arguments: call.Arguments})
-	}
-
-	// Serialise emits: tools run concurrently but events must not interleave
-	// mid-write.
-	var emitMu sync.Mutex
-	safeEmit := func(e Event) error {
-		emitMu.Lock()
-		defer emitMu.Unlock()
-		return emit(e)
-	}
-
-	run := func(i int, call llm.ToolCall) {
-		tool, ok := byName[call.Name]
-		if !ok {
-			outcomes[i] = toolOutcome{
-				message: llm.Message{
-					Role: llm.RoleTool, ToolCallID: call.ID, Name: call.Name,
-					Content: fmt.Sprintf("Tool %q is not available. Active tools: %s", call.Name, strings.Join(namesOf(byName), ", ")),
-				},
-				isError: true,
-			}
-			_ = safeEmit(Event{Type: EventToolResult, ID: call.ID, Name: call.Name, Content: outcomes[i].message.Content, IsError: true})
-			return
-		}
-
-		// A tool that changes something may need a person to say yes first.
-		if refusal := a.checkApproval(ctx, call, tool, sess.ID, safeEmit); refusal != nil {
-			outcomes[i] = toolOutcome{
-				message: llm.Message{
-					Role: llm.RoleTool, ToolCallID: call.ID, Name: call.Name,
-					Content: refusal.Content,
-				},
-				isError: true,
-			}
-			_ = safeEmit(Event{
-				Type: EventToolResult, ID: call.ID, Name: call.Name,
-				Content: refusal.Content, IsError: true,
-			})
-			return
-		}
-
-		// Plugins see the call before it runs, and may refuse it or change
-		// its arguments.
-		if a.plugins != nil {
-			hook := a.plugins.Dispatch(ctx, plugin.Payload{
-				Event: plugin.PreToolCall, SessionID: sess.ID, Platform: req.Platform,
-				Tool: call.Name, Arguments: call.Arguments,
-			})
-			if hook.Notice != "" {
-				_ = safeEmit(Event{Type: EventNotice, Message: hook.Notice})
-			}
-			if hook.Deny {
-				content := "refused by policy: " + hook.Reason
-				outcomes[i] = toolOutcome{
-					message: llm.Message{
-						Role: llm.RoleTool, ToolCallID: call.ID, Name: call.Name,
-						Content: content,
-					},
-					isError: true,
-				}
-				_ = safeEmit(Event{
-					Type: EventToolResult, ID: call.ID, Name: call.Name,
-					Content: content, IsError: true,
-				})
-				return
-			}
-			if hook.Arguments != "" {
-				call.Arguments = hook.Arguments
-			}
-		}
-
-		workspace := sess.Workspace
-		if workspace == "" {
-			workspace = a.config().Agent.Workspace
-		}
-		// A project session confines writes to the project folder plus the
-		// antares workspace, while allowing reads anywhere. Empty for an
-		// ordinary session (reads and writes both stay in the workspace).
-		var writeRoots []string
-		if pd, _ := sess.Meta["project_dir"].(string); strings.TrimSpace(pd) != "" {
-			writeRoots = []string{pd}
-			if aw := a.config().Agent.Workspace; aw != "" && aw != pd {
-				writeRoots = append(writeRoots, aw)
-			}
-		}
-		in := tools.Input{
-			Args:       json.RawMessage(call.Arguments),
-			CallID:     call.ID,
-			SessionID:  sess.ID,
-			UserID:     req.UserID,
-			Platform:   req.Platform,
-			Workspace:  workspace,
-			WriteRoots: writeRoots,
-			Emit: func(p tools.Progress) {
-				_ = safeEmit(Event{
-					Type: EventToolProgress, ID: call.ID, Name: call.Name,
-					Chunk: p.Chunk, Message: p.Message,
-				})
-			},
-			AskUser: a.askBridge(sess.ID, safeEmit),
-			Deps: &tools.Deps{
-				Config: a.config(), Store: a.db, RAG: a.rag, Shell: a.shell,
-				Sub: a.subAgentFor(req), Tasks: a.backgroundFor(req), Skills: a.skillLibrary(),
-				SocialBrowser: a.socialBrowser,
-				Checkpoint: func(sessionID, path, tool string) {
-					a.saveCheckpoint(sessionID, path, tool, req.turnMarker)
-				},
-				RecordResult: func(sessionID, path, resultHash string) {
-					if a.checks != nil {
-						_ = a.checks.RecordResult(sessionID, path, req.turnMarker, resultHash)
-					}
-					// Keep a RAG-indexed project's collection fresh: re-embed the
-					// file the agent just wrote. No-op unless this is an indexed
-					// project session and the file is inside it.
-					if indexed, _ := sess.Meta["rag_indexed"].(bool); indexed {
-						a.reindexFile(sess.ID, req.ProjectDir, path)
-					}
-				},
-				Roles:      a.roleInfos,
-				Vision:     a.describeImage,
-				Speak:      a.speak,
-				Board:      a.board,
-				Transcribe: a.transcribe,
-				Findings:   a.findings,
-				Intel:      a.intel,
-			},
-		}
-
-		// ask_user blocks on a person and has no deadline; every other tool runs
-		// under its timeout. The parent ctx still cancels ask_user on stop/close.
-		toolCtx, cancel := ctx, func() {}
-		if call.Name != "ask_user" {
-			toolCtx, cancel = context.WithTimeout(ctx, a.toolTimeout(call.Name))
-		}
-		defer cancel()
-
-		start := time.Now()
-		res := tool.Execute(toolCtx, in)
-		content := trimForModel(res.Content, a.config().Tools.MaxOutputChars)
-		if content == "" {
-			content = "(tool produced no output)"
-		}
-		slog.Debug("tool executed", "tool", call.Name, "ms", time.Since(start).Milliseconds(), "error", res.IsError)
-
-		// Plugins see the result and may replace what the model is shown —
-		// redacting a secret out of a log, for instance.
-		if a.plugins != nil {
-			hook := a.plugins.Dispatch(ctx, plugin.Payload{
-				Event: plugin.PostToolCall, SessionID: sess.ID, Platform: req.Platform,
-				Tool: call.Name, Arguments: call.Arguments,
-				Result: content, IsError: res.IsError,
-			})
-			if hook.Notice != "" {
-				_ = safeEmit(Event{Type: EventNotice, Message: hook.Notice})
-			}
-			if hook.Result != "" {
-				content = hook.Result
-			}
-		}
-
-		// What the model sees may be fenced as untrusted; what the UI shows stays
-		// raw. Errors are our own messages, so they are never fenced.
-		modelContent := content
-		if !res.IsError && a.config().Agent.WrapUntrustedOutput && untrustedTool(tool) {
-			modelContent = wrapUntrusted(call.Name, content)
-		}
-
-		outcomes[i] = toolOutcome{
-			message: llm.Message{Role: llm.RoleTool, ToolCallID: call.ID, Name: call.Name, Content: modelContent},
-			isError: res.IsError,
-		}
-		_ = safeEmit(Event{Type: EventToolResult, ID: call.ID, Name: call.Name, Content: content, IsError: res.IsError})
-	}
-
-	// recoverRun wraps run() with panic recovery so a panicking tool cannot
-	// deadlock wg.Wait() (parallel) or kill the turn without a user-visible
-	// error (serial). The panic is logged, surfaced as an error tool result,
-	// and the model gets a chance to recover.
-	recoverRun := func(i int, call llm.ToolCall) {
-		defer func() {
-			if r := recover(); r != nil {
-				slog.Error("tool panicked", "tool", call.Name, "panic", r, "stack", string(debug.Stack()))
-				outcomes[i] = toolOutcome{
-					message: llm.Message{
-						Role: llm.RoleTool, ToolCallID: call.ID, Name: call.Name,
-						Content: fmt.Sprintf("Tool %q panicked: %v", call.Name, r),
-					},
-					isError: true,
-				}
-				_ = safeEmit(Event{
-					Type: EventToolResult, ID: call.ID, Name: call.Name,
-					Content: outcomes[i].message.Content, IsError: true,
-				})
-			}
-		}()
-		run(i, call)
-	}
-
-	parallel := a.config().Model.ParallelToolCall && len(calls) > 1
-	if parallel {
-		var wg sync.WaitGroup
-		sem := make(chan struct{}, maxParallelTools)
-		for i, call := range calls {
-			wg.Add(1)
-			go func(i int, call llm.ToolCall) {
-				defer wg.Done()
-				sem <- struct{}{}
-				defer func() { <-sem }()
-				recoverRun(i, call)
-			}(i, call)
-		}
-		wg.Wait()
-		return outcomes
-	}
-	for i, call := range calls {
-		recoverRun(i, call)
-	}
-	return outcomes
-}
-
-const maxParallelTools = 4
-
-func (a *Agent) toolTimeout(name string) time.Duration {
-	if secs, ok := a.config().Tools.Timeouts[name]; ok && secs > 0 {
-		return time.Duration(secs) * time.Second
-	}
-	switch name {
-	case "terminal":
-		return time.Duration(maxInt(a.config().Terminal.Timeout, 60)) * time.Second
-	case "process":
-		// process(wait) intentionally blocks for at most 30 seconds. Leave margin
-		// for scheduling and JSON serialization so the tool can return its state.
-		return 45 * time.Second
-	case "vps_run", "vps_upload", "vps_download":
-		// Tools accept timeout_seconds up to 900. The agent envelope must sit
-		// above that or a long systemctl/apt/transfer is killed early with a
-		// bare context deadline and looks like a flaky VPS failure.
-		return 16 * time.Minute
-	case "delegate_task":
-		return 30 * time.Minute
-	default:
-		return 5 * time.Minute
-	}
+	a.onTurnEnd(TurnEnded{SessionID: sessionID, Platform: platform, ChannelID: channelID})
 }
 
 // subAgentFor returns a delegation hook bound to the current run's depth.
@@ -1035,13 +656,19 @@ func (a *Agent) subAgentFor(parent Request) tools.SubAgent {
 		// A top-level sub-agent may run in its own process, so a crash cannot
 		// take the parent down. Nested delegation stays in-process to avoid a
 		// fork storm; file-backed findings/intel/sessions flow either way.
+		// The workspace and project binding are resolved the same way as the
+		// in-process path, so write confinement and project context do not
+		// depend on which one runs.
+		workspace, projectDir, wt := a.prepareSubAgentWorkspace(ctx, parent, sub)
 		if a.config().Delegation.Subprocess && depth == 1 {
 			_, untrack := trackSubAgent(sub.Role, sub.Prompt, parent.SessionID)
 			defer untrack()
-			return a.runSubprocess(ctx, sub)
+			reply, err := a.runSubprocess(ctx, sub, workspace, projectDir)
+			if wt != nil {
+				reply += "\n\n" + wt.Cleanup(ctx)
+			}
+			return reply, err
 		}
-
-		workspace, projectDir, wt := a.prepareSubAgentWorkspace(ctx, parent, sub)
 
 		subID, untrack := trackSubAgent(sub.Role, sub.Prompt, parent.SessionID)
 		defer untrack()
@@ -1101,32 +728,23 @@ func (a *Agent) subAgentFor(parent Request) tools.SubAgent {
 	}
 }
 
-// runSubprocess delegates by invoking this binary as a child `antares chat`,
-// so a crash in the sub-agent is contained to the child. It reuses the parent's
-// environment (ANTARES_HOME, config), and file-backed findings/intel/sessions
-// carry state across the process boundary.
-func (a *Agent) runSubprocess(ctx context.Context, sub tools.SubAgentRequest) (string, error) {
+// runSubprocess isolates delegated work in a child with an explicit subordinate
+// identity; stdin carries the prompt without command-line length limits.
+func (a *Agent) runSubprocess(ctx context.Context, sub tools.SubAgentRequest, workspace, projectDir string) (string, error) {
 	self, err := os.Executable()
 	if err != nil {
 		return "", fmt.Errorf("subprocess delegation unavailable: %w", err)
 	}
-	prompt := sub.Prompt
-	if strings.TrimSpace(sub.SystemExtra) != "" {
-		prompt = sub.SystemExtra + "\n\n" + prompt
+	payload, err := json.Marshal(map[string]any{
+		"prompt": sub.Prompt, "system_extra": sub.SystemExtra,
+		"toolset": sub.Toolset, "model": sub.Model, "role": sub.Role,
+		"workspace": workspace, "project_dir": projectDir, "max_turns": sub.MaxTurns,
+	})
+	if err != nil {
+		return "", err
 	}
-	args := []string{"chat", "-q"}
-	if sub.Role != "" {
-		args = append(args, "--role", sub.Role)
-	}
-	if sub.Toolset != "" {
-		args = append(args, "--toolset", sub.Toolset)
-	}
-	if sub.Model != "" {
-		args = append(args, "--model", sub.Model)
-	}
-	args = append(args, prompt)
-
-	cmd := exec.CommandContext(ctx, self, args...)
+	cmd := exec.CommandContext(ctx, self, "_subagent")
+	cmd.Stdin = bytes.NewReader(payload)
 	cmd.Env = os.Environ()
 	var out, errBuf bytes.Buffer
 	cmd.Stdout, cmd.Stderr = &out, &errBuf

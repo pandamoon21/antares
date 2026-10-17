@@ -6,7 +6,7 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/DevKuroX/antares/internal/depcheck"
+	"github.com/pandamoon21/antares/internal/depcheck"
 )
 
 // dependenciesTool reports whether the external programs an antares feature

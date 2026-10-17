@@ -9,8 +9,8 @@ import (
 	"sync"
 	"time"
 
-	"github.com/DevKuroX/antares/internal/llm"
-	"github.com/DevKuroX/antares/internal/tools"
+	"github.com/pandamoon21/antares/internal/llm"
+	"github.com/pandamoon21/antares/internal/tools"
 )
 
 // Approval gates tools that change something. `tools.approval_mode` decides
@@ -81,7 +81,7 @@ const approvalTimeout = 5 * time.Minute
 func (a *Agent) checkApproval(ctx context.Context, call llm.ToolCall, tool tools.Tool, sessionID string, emit Emit) *tools.Result {
 	mode := strings.ToLower(strings.TrimSpace(a.config().Tools.ApprovalMode))
 	if mode == "" {
-		mode = "auto"
+		mode = "prompt"
 	}
 
 	danger := dangerInTool(tool, call.Arguments)

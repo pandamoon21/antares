@@ -17,7 +17,7 @@ import (
 	"net/url"
 	"strings"
 
-	"github.com/DevKuroX/antares/internal/browser"
+	"github.com/pandamoon21/antares/internal/browser"
 )
 
 //go:embed data/ui_snapshot.js

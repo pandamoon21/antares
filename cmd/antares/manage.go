@@ -10,9 +10,9 @@ import (
 	"strings"
 	"time"
 
-	"github.com/DevKuroX/antares/internal/cron"
-	"github.com/DevKuroX/antares/internal/store"
-	"github.com/DevKuroX/antares/internal/tools"
+	"github.com/pandamoon21/antares/internal/cron"
+	"github.com/pandamoon21/antares/internal/store"
+	"github.com/pandamoon21/antares/internal/tools"
 )
 
 // cmdCron manages scheduled jobs from the terminal: the same jobs the dashboard

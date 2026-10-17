@@ -9,11 +9,11 @@ import (
 	"time"
 	"unicode/utf8"
 
-	"github.com/DevKuroX/antares/internal/llm"
-	"github.com/DevKuroX/antares/internal/rag"
-	"github.com/DevKuroX/antares/internal/store"
-	"github.com/DevKuroX/antares/internal/textutil"
-	"github.com/DevKuroX/antares/internal/tools"
+	"github.com/pandamoon21/antares/internal/llm"
+	"github.com/pandamoon21/antares/internal/rag"
+	"github.com/pandamoon21/antares/internal/store"
+	"github.com/pandamoon21/antares/internal/textutil"
+	"github.com/pandamoon21/antares/internal/tools"
 )
 
 // projectIndexIgnore / projectIndexExt mirror the dashboard's project walk.
@@ -32,7 +32,11 @@ var projectIndexExt = map[string]bool{
 // collection in the background. Called once when a project session opts in. It
 // is best-effort and never blocks or fails a turn.
 func (a *Agent) indexProject(sessionID, projectDir string) {
-	if a.rag == nil || strings.TrimSpace(projectDir) == "" {
+	// Snapshot the provider once and hand the local to the goroutine, so a
+	// reload (SetRAG) between the nil check and the background Index cannot
+	// race a nil deref.
+	provider := a.RAG()
+	if provider == nil || strings.TrimSpace(projectDir) == "" {
 		return
 	}
 	collection := rag.ProjectCollection(projectDir)
@@ -71,14 +75,15 @@ func (a *Agent) indexProject(sessionID, projectDir string) {
 		}
 		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
 		defer cancel()
-		_, _ = a.rag.Index(ctx, collection, docs)
+		_, _ = provider.Index(ctx, collection, docs)
 	}()
 }
 
 // reindexFile re-embeds a single project file after the agent wrote it, so the
 // project collection stays fresh during development. Best-effort, background.
 func (a *Agent) reindexFile(sessionID, projectDir, absPath string) {
-	if a.rag == nil || strings.TrimSpace(projectDir) == "" {
+	provider := a.RAG()
+	if provider == nil || strings.TrimSpace(projectDir) == "" {
 		return
 	}
 	rel, err := filepath.Rel(projectDir, absPath)
@@ -97,7 +102,7 @@ func (a *Agent) reindexFile(sessionID, projectDir, absPath string) {
 		}
 		ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
 		defer cancel()
-		_, _ = a.rag.Index(ctx, collection, []tools.RAGDoc{{
+		_, _ = provider.Index(ctx, collection, []tools.RAGDoc{{
 			ID: rel, Path: rel, Content: string(data),
 			Meta: map[string]any{"path": rel, "kind": "project"},
 		}})
@@ -115,7 +120,8 @@ const conversationCollection = "conversations"
 // returns "" when RAG is off, the query is empty, or nothing relevant comes
 // back. Best-effort: any error yields no block rather than failing the turn.
 func (a *Agent) autoContext(ctx context.Context, req Request, sess *store.Session) string {
-	if a.rag == nil || !a.config().RAG.AutoContext || req.Platform == "subagent" {
+	provider := a.RAG()
+	if provider == nil || !a.config().RAG.AutoContext || req.Platform == "subagent" {
 		return ""
 	}
 	query := strings.TrimSpace(req.Message)
@@ -163,7 +169,7 @@ func (a *Agent) autoContext(ctx context.Context, req Request, sess *store.Sessio
 		if total >= maxBlocks {
 			break
 		}
-		hits, err := a.rag.Search(cctx, s.collection, query, 4)
+		hits, err := provider.Search(cctx, s.collection, query, 4)
 		if err != nil {
 			continue
 		}
@@ -212,7 +218,8 @@ func (a *Agent) autoContext(ctx context.Context, req Request, sess *store.Sessio
 // indexTurn stores a finished exchange in the conversation collection so it can
 // be recalled later. It runs in the background and never blocks or fails a turn.
 func (a *Agent) indexTurn(sess *store.Session, userMsg, reply string) {
-	if a.rag == nil || !a.config().RAG.AutoContext {
+	provider := a.RAG()
+	if provider == nil || !a.config().RAG.AutoContext {
 		return
 	}
 	userMsg = strings.TrimSpace(userMsg)
@@ -242,7 +249,7 @@ func (a *Agent) indexTurn(sess *store.Session, userMsg, reply string) {
 	go func() {
 		ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
 		defer cancel()
-		if _, err := a.rag.Index(ctx, conversationCollection, []tools.RAGDoc{doc}); err != nil {
+		if _, err := provider.Index(ctx, conversationCollection, []tools.RAGDoc{doc}); err != nil {
 			// Best-effort memory; a failed index must never surface to the user.
 			return
 		}
@@ -254,7 +261,8 @@ func (a *Agent) indexTurn(sess *store.Session, userMsg, reply string) {
 // recall topics and facts tied to them. Gated on rag.per_user. Runs in the
 // background and never blocks or fails a turn.
 func (a *Agent) indexUserTurn(req Request, userMsg, reply string) {
-	if a.rag == nil || !a.config().RAG.PerUser || req.UserID == "" {
+	provider := a.RAG()
+	if provider == nil || !a.config().RAG.PerUser || req.UserID == "" {
 		return
 	}
 	collection := rag.UserCollection(req.Platform, req.UserID)
@@ -297,7 +305,7 @@ func (a *Agent) indexUserTurn(req Request, userMsg, reply string) {
 			},
 		}
 		a.bgAct.record(req.SessionID, "rag: index user memory")
-		_, _ = a.rag.Index(ctx, collection, []tools.RAGDoc{doc})
+		_, _ = provider.Index(ctx, collection, []tools.RAGDoc{doc})
 	}()
 }
 

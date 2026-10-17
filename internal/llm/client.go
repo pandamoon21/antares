@@ -18,7 +18,7 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/DevKuroX/antares/internal/version"
+	"github.com/pandamoon21/antares/internal/version"
 )
 
 // ErrUnsupported is returned by adapters that lack a capability.

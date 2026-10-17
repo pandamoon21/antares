@@ -11,8 +11,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/DevKuroX/antares/internal/board"
-	"github.com/DevKuroX/antares/internal/store"
+	"github.com/pandamoon21/antares/internal/board"
+	"github.com/pandamoon21/antares/internal/store"
 )
 
 // ---- memory -----------------------------------------------------------------

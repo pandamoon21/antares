@@ -8,7 +8,7 @@ import (
 
 	"log/slog"
 
-	"github.com/DevKuroX/antares/internal/llm"
+	"github.com/pandamoon21/antares/internal/llm"
 )
 
 // newClient builds the provider adapter for a model. When the model name is

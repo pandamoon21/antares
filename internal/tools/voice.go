@@ -9,7 +9,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/DevKuroX/antares/internal/config"
+	"github.com/pandamoon21/antares/internal/config"
 )
 
 // ---- speak (text-to-speech) -------------------------------------------------

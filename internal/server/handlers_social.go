@@ -7,10 +7,10 @@ import (
 	"strings"
 	"time"
 
-	"github.com/DevKuroX/antares/internal/config"
-	"github.com/DevKuroX/antares/internal/secret"
-	"github.com/DevKuroX/antares/internal/socialimap"
-	"github.com/DevKuroX/antares/internal/store"
+	"github.com/pandamoon21/antares/internal/config"
+	"github.com/pandamoon21/antares/internal/secret"
+	"github.com/pandamoon21/antares/internal/socialimap"
+	"github.com/pandamoon21/antares/internal/store"
 )
 
 // socialAccountView is the redacted API representation of a SocialAccount.

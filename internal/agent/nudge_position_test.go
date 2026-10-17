@@ -19,7 +19,9 @@ import (
 // as a fresh string literal would pass — but they close the specific
 // regression: reintroducing the append that used to be there fails here.
 
-// runBody returns the parsed body of Run along with the file's position table.
+// runBody returns the parsed body of the turn loop along with the file's
+// position table. The loop is the unexported run method; the exported Run is a
+// thin admission wrapper around it (admission.go).
 func runBody(t *testing.T) (*token.FileSet, *ast.BlockStmt) {
 	t.Helper()
 	fset := token.NewFileSet()
@@ -29,11 +31,11 @@ func runBody(t *testing.T) (*token.FileSet, *ast.BlockStmt) {
 	}
 	for _, decl := range file.Decls {
 		fn, ok := decl.(*ast.FuncDecl)
-		if ok && fn.Name.Name == "Run" && fn.Recv != nil && fn.Body != nil {
+		if ok && fn.Name.Name == "run" && fn.Recv != nil && fn.Body != nil {
 			return fset, fn.Body
 		}
 	}
-	t.Fatal("Run is no longer a method on Agent in agent.go; this guard needs updating")
+	t.Fatal("the turn loop is no longer a run method on Agent in agent.go; this guard needs updating")
 	return nil, nil
 }
 

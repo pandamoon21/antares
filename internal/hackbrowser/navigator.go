@@ -19,7 +19,7 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/DevKuroX/antares/internal/llm"
+	"github.com/pandamoon21/antares/internal/llm"
 )
 
 //go:embed data/planner.txt

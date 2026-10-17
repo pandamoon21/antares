@@ -5,7 +5,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/DevKuroX/antares/internal/agent"
+	"github.com/pandamoon21/antares/internal/agent"
 )
 
 func TestLiveRun_ReplayThenFollow(t *testing.T) {

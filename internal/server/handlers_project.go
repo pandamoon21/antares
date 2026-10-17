@@ -7,7 +7,7 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/DevKuroX/antares/internal/config"
+	"github.com/pandamoon21/antares/internal/config"
 )
 
 // handleGetSoul returns the agent's identity file (SOUL.md) plus whether it is

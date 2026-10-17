@@ -7,7 +7,7 @@ import (
 	"fmt"
 	"os"
 
-	"github.com/DevKuroX/antares/internal/tui"
+	"github.com/pandamoon21/antares/internal/tui"
 )
 
 func main() {

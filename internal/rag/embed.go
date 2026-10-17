@@ -10,9 +10,9 @@ import (
 	"strings"
 	"time"
 
-	"github.com/DevKuroX/antares/internal/config"
-	"github.com/DevKuroX/antares/internal/llm"
-	"github.com/DevKuroX/antares/internal/version"
+	"github.com/pandamoon21/antares/internal/config"
+	"github.com/pandamoon21/antares/internal/llm"
+	"github.com/pandamoon21/antares/internal/version"
 )
 
 // embedder turns text into vectors for the store. It abstracts over the two
@@ -187,11 +187,19 @@ func (e *voyageEmbedder) embedBatch(ctx context.Context, texts []string, inputTy
 	if err := json.Unmarshal(data, &parsed); err != nil {
 		return nil, err
 	}
-	// Order by index to be safe, then extract.
-	vecs := make([][]float32, len(parsed.Data))
+	// Size the result from the input, not the API reply — a truncated
+	// response would otherwise yield a short slice that the caller happily
+	// appends and treats as success. Any missing/zero-length vector is left
+	// as nil so upstream can refuse to persist a doomed chunk.
+	vecs := make([][]float32, len(texts))
 	for _, d := range parsed.Data {
 		if d.Index >= 0 && d.Index < len(vecs) {
 			vecs[d.Index] = d.Embedding
+		}
+	}
+	for i := range vecs {
+		if len(vecs[i]) == 0 {
+			return nil, fmt.Errorf("voyage returned no embedding for input %d/%d", i, len(texts))
 		}
 	}
 	return vecs, nil

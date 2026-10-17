@@ -5,7 +5,7 @@ import (
 	"net/http"
 	"strings"
 
-	"github.com/DevKuroX/antares/internal/config"
+	"github.com/pandamoon21/antares/internal/config"
 )
 
 // handleAddMCPServer registers an MCP server typed in the dashboard and writes

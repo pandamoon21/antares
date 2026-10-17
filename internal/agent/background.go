@@ -3,11 +3,13 @@ package agent
 import (
 	"context"
 	"fmt"
+	"log/slog"
+	"runtime/debug"
 	"strings"
 	"sync"
 	"time"
 
-	"github.com/DevKuroX/antares/internal/tools"
+	"github.com/pandamoon21/antares/internal/tools"
 )
 
 // A background task is a sub-agent that runs detached from the turn that
@@ -92,6 +94,21 @@ func (a *Agent) startBackground(parent Request, req tools.SubAgentRequest) strin
 	go func() {
 		defer cancel()
 		defer untrack()
+		// Nothing above this goroutine will catch a panic — a.Run or
+		// prepareSubAgentWorkspace crashing would otherwise take the whole
+		// process down, contradicting the harness invariant that a single
+		// tool or worker must not cost the session. Record the failure as a
+		// task error so the dashboard/parent sees it, and fire the done
+		// signal so a delegating session is not left waiting forever.
+		defer func() {
+			if r := recover(); r != nil {
+				slog.Error("background task panicked",
+					"task_id", id, "role", req.Role,
+					"panic", r, "stack", string(debug.Stack()))
+				a.bg.finish(id, nil, fmt.Errorf("panicked: %v", r), nil)
+				a.signalBackgroundDone(id)
+			}
+		}()
 
 		maxTurns := req.MaxTurns
 		if maxTurns <= 0 {
@@ -156,6 +173,20 @@ func (a *Agent) signalBackgroundDone(id string) {
 // OnBackgroundDone registers the callback invoked when a background sub-agent
 // finishes. The server uses it to resume (or wake) the delegating session.
 func (a *Agent) OnBackgroundDone(cb func(BackgroundDone)) { a.onBgDone = cb }
+
+// TurnEnded is fired after a non-quiet top-level turn completes. A host uses it
+// to auto-continue a confident autonomous goal — start the next turn on its own.
+type TurnEnded struct {
+	SessionID string
+	Platform  string
+	// ChannelID/UserID let a gateway deliver the continued turn to the right
+	// place (empty on the web/CLI).
+	ChannelID string
+	UserID    string
+}
+
+// OnTurnEnd registers the callback invoked when a top-level turn finishes.
+func (a *Agent) OnTurnEnd(cb func(TurnEnded)) { a.onTurnEnd = cb }
 
 // continueTask sends a follow-up to a finished task, running another turn on the
 // same sub-session so the coordinator can iterate with a worker. It runs

@@ -5,9 +5,9 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/DevKuroX/antares/internal/config"
-	"github.com/DevKuroX/antares/internal/llm"
-	"github.com/DevKuroX/antares/internal/store"
+	"github.com/pandamoon21/antares/internal/config"
+	"github.com/pandamoon21/antares/internal/llm"
+	"github.com/pandamoon21/antares/internal/store"
 )
 
 // stubStore is a minimal store for compact persistence tests.

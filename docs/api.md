@@ -56,6 +56,10 @@ id assigned.
 | `error` | `error` | The turn failed |
 | `done` | | Terminal — always last |
 
+Terminal failures are also stored as assistant rows with `meta.is_error=true`.
+Their `content` is a one-field JSON object (`{"error":"..."}`), so the
+dashboard can render the failure after a reload and retry the preceding prompt.
+
 ### `POST /api/chat/interrupt`
 
 ```json
@@ -126,6 +130,14 @@ not a transport error.
 | `POST /api/rag/search` | Query |
 | `DELETE /api/rag/collections/{name}` | Drop a collection |
 
+Skill list/get responses include `read_only`. Automatically discovered skills can
+be read and toggled; toggles persist exact names in `skills.disabled`, not source
+files. Save and delete return HTTP 403 without changing borrowed content or
+creating a configured override. Toggle persistence/reload failures return HTTP 500;
+success follows both persistence and live publication. These endpoints use the startup catalog;
+`POST /api/commands/run` with `/skills` and a `session_id` uses that session's
+persisted project binding. See [skill sources and precedence](skills.md#where-they-live).
+
 ## Scheduling and channels
 
 | | |
@@ -170,6 +182,28 @@ not a transport error.
 | `POST /api/setup/test` | Try a provider and key |
 | `POST /api/setup/complete` | Write the configuration |
 
+## Content Creator
+
+| Method and path | Purpose |
+|---|---|
+| `GET /api/content-creator/projects` | List saved projects |
+| `POST /api/content-creator/projects` | Create a project with title and brief |
+| `GET /api/content-creator/projects/{id}` | Fetch current project, artifacts, and run status |
+| `PUT /api/content-creator/projects/{id}` | Update the plan using its current `revision` |
+| `POST /api/content-creator/projects/{id}/action` | Generate a reference/keyframe/clip, poll video, assemble, or explicitly reset |
+| `POST /api/content-creator/projects/{id}/run` | Start the Content Creator agent at a requested stage; returns `session_id` |
+| `POST /api/content-creator/projects/{id}/reconcile` | Operator verifies an uncertain upload was not published before another attempt |
+| `GET /api/content-creator/projects/{id}/artifact?path=...` | Read registered project media; supports video range requests |
+| `GET /api/content-creator/settings` | Read media configuration and FFmpeg availability without credentials |
+| `POST /api/content-creator/settings` | Save image/video configuration; blank API keys preserve existing keys |
+
+Media actions take `{ "action": "generate_video", "target_id": "shot-id" }`.
+Available actions: `generate_reference`, `generate_keyframe`, `generate_video`,
+`poll_video`, `assemble`, `reset_reference`, `reset_shot`. Resets also require
+`confirmed: true`. Video creation persists the provider job ID; poll it until
+complete instead of creating another paid job. Run requests take `stage` and
+`publish_mode`; a publish stage in draft mode is rejected.
+
 ## Errors
 
 ```json
@@ -177,6 +211,10 @@ not a transport error.
 ```
 
 `400` for a bad request, `401` for a missing or wrong token, `404` for an
-unknown path, `500` for a failure inside. Endpoints where failure is an ordinary
-outcome — installing, verifying a key, running a command — return `200` with
-`ok: false` instead, so the caller can show the message rather than a banner.
+unknown path, `409` when a session is already busy or setup has already
+completed, `429` when a request would exceed `max_concurrent_sessions`
+(the running top-level turn budget; `0` means unlimited), and `500` for a
+failure inside. Endpoints where failure is an ordinary outcome —
+installing, verifying a key, running a command — return `200` with
+`ok: false` instead, so the caller can show the message rather than a
+banner.

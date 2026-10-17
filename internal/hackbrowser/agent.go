@@ -30,7 +30,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/DevKuroX/antares/internal/browser"
+	"github.com/pandamoon21/antares/internal/browser"
 )
 
 var agentLog = Log.Create("hackbrowser:agent")

@@ -6,7 +6,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/DevKuroX/antares/internal/tools"
+	"github.com/pandamoon21/antares/internal/tools"
 )
 
 // The ask desk pauses a turn while ask_user waits for the person to answer.

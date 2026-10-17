@@ -11,11 +11,11 @@ import (
 	"strings"
 	"time"
 
-	"github.com/DevKuroX/antares/internal/config"
-	"github.com/DevKuroX/antares/internal/llm"
-	"github.com/DevKuroX/antares/internal/textutil"
-	"github.com/DevKuroX/antares/internal/tools"
-	"github.com/DevKuroX/antares/internal/version"
+	"github.com/pandamoon21/antares/internal/config"
+	"github.com/pandamoon21/antares/internal/llm"
+	"github.com/pandamoon21/antares/internal/textutil"
+	"github.com/pandamoon21/antares/internal/tools"
+	"github.com/pandamoon21/antares/internal/version"
 )
 
 // reranker reorders recalled candidates by relevance to the query, returning at

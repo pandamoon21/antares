@@ -14,7 +14,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/DevKuroX/antares/internal/config"
+	"github.com/pandamoon21/antares/internal/config"
 )
 
 func TestDaemonStateRoundTripAndStaleCleanup(t *testing.T) {

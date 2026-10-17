@@ -7,7 +7,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/DevKuroX/antares/internal/tempmail"
+	"github.com/pandamoon21/antares/internal/tempmail"
 )
 
 // tempMailTool gives agents disposable generator.email inboxes without UI state.

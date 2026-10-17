@@ -10,8 +10,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/DevKuroX/antares/internal/agent"
-	"github.com/DevKuroX/antares/internal/config"
+	"github.com/pandamoon21/antares/internal/agent"
+	"github.com/pandamoon21/antares/internal/config"
 )
 
 // TestModelSetSwapsBothConfigPointers guards the regression where

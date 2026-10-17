@@ -10,7 +10,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/DevKuroX/antares/internal/version"
+	"github.com/pandamoon21/antares/internal/version"
 )
 
 // releasesAPI is the GitHub endpoint for the newest published release.

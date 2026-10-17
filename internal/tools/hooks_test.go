@@ -6,7 +6,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/DevKuroX/antares/internal/hookpack"
+	"github.com/pandamoon21/antares/internal/hookpack"
 )
 
 // hookToolInstances returns one of each hook tool, with the same constructor

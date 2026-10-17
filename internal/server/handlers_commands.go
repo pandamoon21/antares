@@ -4,17 +4,18 @@ import (
 	"net/http"
 	"strings"
 
-	"github.com/DevKuroX/antares/internal/commands"
-	"github.com/DevKuroX/antares/internal/version"
+	"github.com/pandamoon21/antares/internal/commands"
+	"github.com/pandamoon21/antares/internal/version"
 )
 
 // commandDeps hands the shared command layer everything the server has wired.
 func (s *Server) commandDeps() commands.Deps {
+	mgr := s.currentSkills()
 	return commands.Deps{
 		Config:  s.config,
 		Agent:   s.agent,
 		Store:   s.db,
-		Skills:  s.skills,
+		Skills:  mgr,
 		MCP:     s.mcp,
 		Reload:  s.applyReload,
 		Version: version.Version,

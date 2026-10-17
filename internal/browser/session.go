@@ -15,7 +15,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/DevKuroX/antares/internal/stealth"
+	"github.com/pandamoon21/antares/internal/stealth"
 )
 
 // Session is one browser with one active page. Keeping the page alive between

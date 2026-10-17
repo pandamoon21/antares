@@ -4,11 +4,11 @@ import (
 	"context"
 	"time"
 
-	"github.com/DevKuroX/antares/internal/board"
-	"github.com/DevKuroX/antares/internal/config"
-	"github.com/DevKuroX/antares/internal/engagement"
-	"github.com/DevKuroX/antares/internal/findings"
-	"github.com/DevKuroX/antares/internal/store"
+	"github.com/pandamoon21/antares/internal/board"
+	"github.com/pandamoon21/antares/internal/config"
+	"github.com/pandamoon21/antares/internal/engagement"
+	"github.com/pandamoon21/antares/internal/findings"
+	"github.com/pandamoon21/antares/internal/store"
 )
 
 // RAGResult is one retrieved passage.

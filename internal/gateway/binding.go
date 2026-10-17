@@ -3,7 +3,7 @@ package gateway
 import (
 	"strings"
 
-	"github.com/DevKuroX/antares/internal/config"
+	"github.com/pandamoon21/antares/internal/config"
 )
 
 // ResolveBinding picks the most specific enabled binding for a message on a

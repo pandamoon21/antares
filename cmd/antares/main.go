@@ -8,6 +8,7 @@ import (
 	"log/slog"
 	"os"
 	"os/signal"
+	"reflect"
 	"sort"
 	"strings"
 	"sync"
@@ -16,27 +17,28 @@ import (
 
 	"golang.org/x/term"
 
-	"github.com/DevKuroX/antares/internal/agent"
-	"github.com/DevKuroX/antares/internal/commands"
-	"github.com/DevKuroX/antares/internal/config"
-	"github.com/DevKuroX/antares/internal/cron"
-	"github.com/DevKuroX/antares/internal/gateway"
-	"github.com/DevKuroX/antares/internal/httpshim"
-	"github.com/DevKuroX/antares/internal/hub"
-	"github.com/DevKuroX/antares/internal/logx"
-	"github.com/DevKuroX/antares/internal/mcp"
-	"github.com/DevKuroX/antares/internal/plugin"
-	"github.com/DevKuroX/antares/internal/providers"
-	"github.com/DevKuroX/antares/internal/rag"
-	"github.com/DevKuroX/antares/internal/roles"
-	"github.com/DevKuroX/antares/internal/server"
-	"github.com/DevKuroX/antares/internal/skillpack"
-	"github.com/DevKuroX/antares/internal/skills"
-	"github.com/DevKuroX/antares/internal/socialbrowser"
-	"github.com/DevKuroX/antares/internal/store"
-	"github.com/DevKuroX/antares/internal/tools"
-	"github.com/DevKuroX/antares/internal/tui"
-	"github.com/DevKuroX/antares/internal/version"
+	"github.com/pandamoon21/antares/internal/agent"
+	"github.com/pandamoon21/antares/internal/commands"
+	"github.com/pandamoon21/antares/internal/config"
+	"github.com/pandamoon21/antares/internal/creator"
+	"github.com/pandamoon21/antares/internal/cron"
+	"github.com/pandamoon21/antares/internal/gateway"
+	"github.com/pandamoon21/antares/internal/httpshim"
+	"github.com/pandamoon21/antares/internal/hub"
+	"github.com/pandamoon21/antares/internal/logx"
+	"github.com/pandamoon21/antares/internal/mcp"
+	"github.com/pandamoon21/antares/internal/plugin"
+	"github.com/pandamoon21/antares/internal/providers"
+	"github.com/pandamoon21/antares/internal/rag"
+	"github.com/pandamoon21/antares/internal/roles"
+	"github.com/pandamoon21/antares/internal/server"
+	"github.com/pandamoon21/antares/internal/skillpack"
+	"github.com/pandamoon21/antares/internal/skills"
+	"github.com/pandamoon21/antares/internal/socialbrowser"
+	"github.com/pandamoon21/antares/internal/store"
+	"github.com/pandamoon21/antares/internal/tools"
+	"github.com/pandamoon21/antares/internal/tui"
+	"github.com/pandamoon21/antares/internal/version"
 )
 
 func main() {
@@ -60,11 +62,13 @@ func run() error {
 		os.Exit(httpshim.Run(tool, rest))
 	}
 
-	// Bare `antares` opens the TUI when there is a terminal to draw on, and
-	// falls back to serving when there is not (systemd, Docker, cron).
-	command := "tui"
+	// Bare `antares` starts the background server, so the common case is a single
+	// word: type `antares` and it runs. `antares tui` opens the terminal UI, and
+	// `antares --foreground` runs the server attached (systemd, Docker, cron).
+	// When there is no terminal at all (a service manager), a bare invocation is
+	// treated as an explicit foreground serve rather than trying to daemonize.
+	command := "serve"
 	if len(args) == 0 && !term.IsTerminal(int(os.Stdin.Fd())) {
-		command = "serve"
 		args = []string{"--foreground"}
 	}
 	if len(args) > 0 && !strings.HasPrefix(args[0], "-") {
@@ -72,7 +76,7 @@ func run() error {
 	}
 
 	switch command {
-	case "serve", "start":
+	case "serve":
 		return cmdServe(args)
 	case "stop":
 		return cmdStop(args)
@@ -80,13 +84,10 @@ func run() error {
 		return cmdStatus(args)
 	case "_serve_foreground":
 		return cmdServeForeground()
-	case "tui", "chat-ui":
+	case "_subagent":
+		return cmdSubAgent(args)
+	case "tui":
 		return cmdTUI()
-	case "chat", "repl", "cli":
-		if command == "repl" || command == "cli" {
-			args = append([]string{"-i"}, args...)
-		}
-		return cmdChat(args)
 	case "config":
 		return cmdConfig(args)
 	case "model":
@@ -125,16 +126,12 @@ func printUsage() {
 	fmt.Printf(`%s %s — AI agent
 
 Usage:
-  antares                  Open the terminal UI (serves the API when headless)
-  antares serve            Start the API server in the background
-  antares serve --foreground  Run attached to this terminal (debug/systemd)
-  antares stop             Stop the background API server
+  antares                  Start the API server + dashboard in the background
+  antares --foreground     Run attached to this terminal (debug/systemd/Docker)
+  antares stop             Stop the background server
   antares status           Show background server status
-  antares tui              Open the terminal UI explicitly
+  antares tui              Open the terminal UI
   antares setup            Configure Antares (web or terminal wizard)
-  antares chat <message>   Send one message and print the reply
-  antares chat -i          A plain line-based conversation (no full-screen UI)
-  antares repl             The same thing, spelled differently
   antares model [id]       Show, list, or change the active model
   antares model list       List every configured model
   antares provider         List providers and their connection status
@@ -190,22 +187,28 @@ func cmdTUI() error {
 		return fmt.Errorf("preparing workspace: %w", err)
 	}
 
-	return tui.New(rt.agent, rt.cfg, rt.db).Run(ctx)
+	ui := tui.New(rt.agent, rt.cfg, rt.db)
+	ui.SetReload(rt.reload)
+	return ui.Run(ctx)
 }
 
 // runtimeServices bundles everything a running server needs, so a config reload
 // can rebuild the pieces that depend on configuration.
 type runtimeServices struct {
-	mu      sync.Mutex
-	cfg     *config.Config
-	db      store.Store
-	shell   *tools.ShellManager
-	agent   *agent.Agent
-	skills  *skills.Manager
-	cron    *cron.Runner
-	gateway *gateway.Manager
-	mcp     *mcp.Manager
-	social  *socialbrowser.Manager
+	mu               sync.Mutex
+	cfg              *config.Config
+	db               store.Store
+	shell            *tools.ShellManager
+	agent            *agent.Agent
+	skills           *skills.Manager
+	cron             *cron.Runner
+	gateway          *gateway.Manager
+	mcp              *mcp.Manager
+	social           *socialbrowser.Manager
+	skillsHome       string
+	skillsProjectDir string
+	skillsCancel     context.CancelFunc
+	skillsDone       chan struct{}
 }
 
 func bootstrap(ctx context.Context) (*runtimeServices, error) {
@@ -216,9 +219,20 @@ func bootstrap(ctx context.Context) (*runtimeServices, error) {
 	if err != nil {
 		return nil, err
 	}
+	cfg, err = migrateSkillState(cfg)
+	if err != nil {
+		return nil, err
+	}
 	if err := logx.Setup(cfg.Logging.Level, cfg.Logging.File, cfg.Logging.JSON); err != nil {
 		return nil, fmt.Errorf("setting up logging: %w", err)
 	}
+	// Kick off the background models.dev refresh. The bundled snapshot
+	// answers every lookup immediately (offline, first-run, corporate
+	// firewall); this pulls a fresh copy in the background and caches it
+	// under $XDG_CACHE_HOME/antares/models.json for the next boot. Set
+	// ANTARES_DISABLE_MODELS_FETCH=1 to skip on airgapped hosts.
+	providers.StartRefresh(ctx)
+
 	// Don't create the default workspace before the wizard has run — a fresh
 	// install shouldn't leave ~/antares-workspace behind if setup is abandoned.
 	if !needsSetup(cfg) {
@@ -268,9 +282,20 @@ func bootstrap(ctx context.Context) (*runtimeServices, error) {
 		slog.Info("unpacked the security skill library", "count", n)
 	}
 
-	skillDirs := append(append([]string{}, cfg.Skills.Dirs...), "~/.antares/security-skills")
-	skillMgr := skills.NewManager(expandAll(skillDirs))
-	skillMgr.SetPackDirs([]string{packDir})
+	skillsHome, err := os.UserHomeDir()
+	if err != nil || strings.TrimSpace(skillsHome) == "" {
+		slog.Warn("automatic user skills unavailable", "error", err)
+		skillsHome = ""
+	}
+	skillsProjectDir, err := os.Getwd()
+	if err != nil {
+		slog.Warn("automatic project skills unavailable", "error", err)
+		skillsProjectDir = ""
+	}
+	skillMgr := skills.NewManager(skills.Options{
+		Dirs: expandAll(cfg.Skills.Dirs), PackDirs: []string{packDir},
+		UserHome: skillsHome, ProjectDir: skillsProjectDir,
+	})
 	if err := skillMgr.Reload(); err != nil {
 		slog.Warn("some skills failed to load", "error", err)
 	}
@@ -294,6 +319,7 @@ func bootstrap(ctx context.Context) (*runtimeServices, error) {
 	ag.SetRoles(roleReg)
 
 	rt := &runtimeServices{cfg: cfg, db: db, shell: shell, agent: ag, skills: skillMgr}
+	rt.skillsHome, rt.skillsProjectDir = skillsHome, skillsProjectDir
 	rt.social = socialbrowser.New()
 	ag.SetSocialBrowser(rt.social)
 
@@ -322,6 +348,7 @@ func bootstrap(ctx context.Context) (*runtimeServices, error) {
 		}
 	}
 
+	rt.startSkillRefresh(ctx)
 	return rt, nil
 }
 
@@ -337,7 +364,7 @@ func (rt *runtimeServices) handleGatewayMessage(ctx context.Context, msg gateway
 	// A slash command is answered here rather than being sent to the model, so
 	// /status in Telegram means what it means in the terminal.
 	if name, args, ok := commands.Parse(msg.Text); ok {
-		return rt.runGatewayCommand(ctx, key, sessionID, name, args)
+		return rt.runGatewayCommand(ctx, key, sessionID, name, args, msg.Platform, msg.ChannelID)
 	}
 
 	// Per-channel routing. Bindings gate GROUP/server channels: when a platform
@@ -448,12 +475,14 @@ func (rt *runtimeServices) messageIsRelevant(ctx context.Context, b *config.Bind
 // runGatewayCommand answers a slash command typed in a chat platform. The few
 // commands that only a screen can carry out are translated into something a
 // message thread can actually do.
-func (rt *runtimeServices) runGatewayCommand(ctx context.Context, kvKey, sessionID, name, args string) (string, error) {
+func (rt *runtimeServices) runGatewayCommand(ctx context.Context, kvKey, sessionID, name, args, platform, channelID string) (string, error) {
 	res, err := commands.Run(ctx, rt.commandDeps(), commands.Input{
 		Name:      name,
 		Args:      args,
 		SessionID: sessionID,
 		Surface:   commands.SurfaceGateway,
+		Platform:  platform,
+		ChannelID: channelID,
 	})
 	if err != nil {
 		return err.Error(), nil
@@ -469,6 +498,10 @@ func (rt *runtimeServices) runGatewayCommand(ctx context.Context, kvKey, session
 			rt.agent.Interrupt(sessionID)
 		}
 		return "Stopped.", nil
+	case "goal_autostart":
+		// A confident goal set from chat must begin working now; its turns are
+		// delivered back to this channel.
+		rt.agent.KickAutonomousGoal(ctx, sessionID, platform, channelID)
 	}
 	if res.Output == "" {
 		return "Done.", nil
@@ -492,30 +525,188 @@ func (rt *runtimeServices) commandDeps() commands.Deps {
 	}
 }
 
-// runCronJob executes a scheduled prompt in its own throwaway session.
-func (rt *runtimeServices) runCronJob(ctx context.Context, job store.CronJob) (string, string, error) {
-	var reply strings.Builder
-	sessionID := ""
-	res, err := rt.agent.Run(ctx, agent.Request{
-		Message:     job.Prompt,
+// runCronJob executes a scheduled prompt in its own throwaway session. The
+// job's Meta drives which specialist runs (role), where it runs (workspace),
+// and — for content-creator schedules — which project and pipeline stage it
+// operates on. Missing prompt for a role-bound job is fine: the SystemExtra
+// below tells the specialist exactly what its stage owes.
+func (rt *runtimeServices) runCronJob(ctx context.Context, job store.CronJob) (resultSession, resultReply string, resultErr error) {
+	role, _ := job.Meta["role"].(string)
+	workspace, _ := job.Meta["workspace"].(string)
+	projectID, _ := job.Meta["content_project_id"].(string)
+	stage, _ := job.Meta["content_stage"].(string)
+	publishMode, _ := job.Meta["publish_mode"].(string)
+	role = strings.TrimSpace(role)
+	workspace = strings.TrimSpace(workspace)
+	projectID = strings.TrimSpace(projectID)
+	stage = strings.ToLower(strings.TrimSpace(stage))
+	publishMode = strings.ToLower(strings.TrimSpace(publishMode))
+
+	// Assign stage/publishMode defaults early so WithRun, SystemExtra, and
+	// the derived prompt all see the same effective values. An empty string
+	// on the context would silently escape the tool guard.
+	if role == "content-creator" && (projectID != "" || stage != "") {
+		if stage == "" {
+			stage = "full"
+		}
+		if publishMode == "" {
+			publishMode = "draft"
+		}
+	}
+
+	// Draft publish is a no-op stage: refuse it at the scheduler rather
+	// than spin up a session, prepare a run, and claim success on nothing.
+	if role == "content-creator" && stage == "publish" && publishMode == "draft" {
+		return "", "", fmt.Errorf("content-creator publish stage in draft mode is a no-op; use publish_mode=auto or run a different stage")
+	}
+
+	message := job.Prompt
+	if strings.TrimSpace(message) == "" {
+		message = defaultCronMessage(role, stage, projectID, publishMode)
+	}
+	systemExtra := cronSystemExtra(job.Name, role, stage, publishMode, projectID)
+
+	sessionID := "ses_creator_" + randHex(8)
+
+	// Content-creator jobs bind to a project directory and reserve a run
+	// against the creator service. Validate the project up front (before
+	// spending a session on Prepare) and default the workspace to the
+	// project's own directory so view_image/read_file/browser upload can
+	// see the generated assets under the write confinement.
+	var creatorSvc *creator.Service
+	if role == "content-creator" && projectID != "" {
+		creatorSvc = creator.New(rt.db, config.Path("content-creator"))
+		if _, err := creatorSvc.Get(ctx, projectID); err != nil {
+			return sessionID, "", fmt.Errorf("content creator project %s: %w", projectID, err)
+		}
+		if workspace == "" {
+			workspace = config.Path("content-creator", projectID)
+		}
+	}
+
+	runCtx := ctx
+	if role == "content-creator" && (projectID != "" || stage != "") {
+		runCtx = creator.WithRun(ctx, projectID, stage, publishMode, sessionID)
+	}
+
+	prepared, err := rt.agent.Prepare(runCtx, agent.Request{
+		SessionID:   sessionID,
+		Message:     message,
 		Platform:    "cron",
-		SystemExtra: "You are running unattended on a schedule named " + job.Name + ". Nobody can answer follow-up questions, so make reasonable assumptions and finish the task.",
-	}, func(e agent.Event) error {
+		Role:        role,
+		Workspace:   workspace,
+		SystemExtra: systemExtra,
+	})
+	if err != nil {
+		return sessionID, "", err
+	}
+
+	if creatorSvc != nil {
+		if _, err := creatorSvc.BeginRun(runCtx, projectID, stage, publishMode, sessionID); err != nil {
+			prepared.Close()
+			return sessionID, "", err
+		}
+	}
+
+	var reply strings.Builder
+	var runErr error
+	// EndRun and the social lease MUST always release, even on panic or on
+	// runCtx cancellation. Use WithoutCancel + a short deadline so a
+	// cancelled parent context cannot skip cleanup.
+	defer func() {
+		if creatorSvc != nil {
+			cleanupCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
+			defer cancel()
+			p, err := creatorSvc.EndRun(cleanupCtx, projectID, sessionID, runErr)
+			if err != nil {
+				resultErr = err
+			} else if resultErr == nil && p.RunStatus == "error" {
+				resultErr = errors.New(p.LastRunError)
+			}
+		}
+		if rt.social != nil {
+			rt.social.Release(sessionID)
+		}
+	}()
+
+	res, err := prepared.Run(func(e agent.Event) error {
 		switch e.Type {
-		case agent.EventSession:
-			sessionID = e.ID
 		case agent.EventText:
 			reply.WriteString(e.Delta)
 		}
 		return nil
 	})
-	if err != nil {
-		return sessionID, "", err
+	runErr = err
+	if runErr != nil {
+		return sessionID, "", runErr
 	}
 	if res != nil && res.Reply != "" {
 		return sessionID, res.Reply, nil
 	}
 	return sessionID, reply.String(), nil
+}
+
+// defaultCronMessage synthesises the user-facing message for a role-bound job
+// where the caller left prompt blank — the UI-happy path when scheduling a
+// content-creator stage.
+func defaultCronMessage(role, stage, projectID, publishMode string) string {
+	if role == "content-creator" && projectID != "" {
+		s := stage
+		if s == "" {
+			s = "full"
+		}
+		mode := publishMode
+		if mode == "" {
+			mode = "draft"
+		}
+		return "Run the " + s + " stage of content-creator project " + projectID +
+			" in " + mode + " mode. Follow the stage instructions in your system prompt exactly."
+	}
+	if role != "" {
+		return "Run your scheduled routine as the " + role + " specialist."
+	}
+	return "Run your scheduled routine."
+}
+
+// cronSystemExtra spells out the unattended contract and, for a
+// content-creator run, exactly which pipeline stages are and are not allowed.
+// The prompt is the last line of defence — the content_creator tool and the
+// per-tool cron guard reject the same actions structurally.
+func cronSystemExtra(name, role, stage, publishMode, projectID string) string {
+	var b strings.Builder
+	fmt.Fprintf(&b, "You are running unattended on a schedule named %s. Nobody can answer follow-up questions, so make reasonable assumptions and finish the task. If a step requires human approval or credentials you cannot obtain unattended, stop and report why — do not wait, do not ask, and do not bypass approval checks.", name)
+	if role == "content-creator" && (projectID != "" || stage != "") {
+		s := stage
+		if s == "" {
+			s = "full"
+		}
+		mode := publishMode
+		if mode == "" {
+			mode = "draft"
+		}
+		fmt.Fprintf(&b, "\n\nActive content-creator run:\n- project_id: %s\n- stage: %s\n- publish_mode: %s\n", projectID, s, mode)
+		switch s {
+		case "research":
+			b.WriteString("Do research only: observe live sources, record trends with URL/title/observed_at (and metrics only if you actually saw them), refine ideas. Do NOT generate any references, keyframes, videos, or publish. Do NOT call prepare_publish or confirm_publish.")
+		case "plan":
+			b.WriteString("Plan only: pick the selected idea, write reference briefs and the ordered shot list on the project. Do NOT generate references, keyframes, or videos. Do NOT call prepare_publish or confirm_publish.")
+		case "produce":
+			b.WriteString("Produce only: generate approved references, then keyframes, then video jobs; poll and download; inspect keyframes and last frames before continuing; assemble the final cut. Do NOT publish. Do NOT call prepare_publish or confirm_publish.")
+		case "publish":
+			if mode == "auto" {
+				b.WriteString("Publish stage in auto mode: call prepare_publish, then drive the social browser to upload to the project's account, then call confirm_publish with the actual verified post URL. If any step blocks (auth expired, upload rejected, no post URL) call block_publish with the reason — never fabricate a post URL, never mark published without one.")
+			} else {
+				b.WriteString("Publish stage in draft mode: this is a no-op. Do NOT call prepare_publish, do NOT call confirm_publish, and do NOT drive any upload. Report that draft mode disables the publish stage and stop.")
+			}
+		case "full":
+			if mode == "auto" {
+				b.WriteString("Full pipeline in auto mode: research -> plan -> produce -> publish end-to-end. In the publish step, upload via the social browser and confirm_publish with the verified post URL, or block_publish with the reason. Never fabricate a post URL.")
+			} else {
+				b.WriteString("Full pipeline in draft mode: research -> plan -> produce -> assemble the final MP4, then STOP. Do NOT call prepare_publish, confirm_publish, or drive any upload. Leave the assembled MP4 for the operator to review.")
+			}
+		}
+	}
+	return b.String()
 }
 
 // reload re-reads config and rebuilds config-dependent services in place.
@@ -527,6 +718,21 @@ func (rt *runtimeServices) reload() error {
 	if err != nil {
 		return err
 	}
+	cfg, err = migrateSkillState(cfg)
+	if err != nil {
+		return err
+	}
+	cfg, _ = config.Effective(rt.cfg, cfg)
+	previous := rt.cfg
+	if err := cfg.Server.ValidateListen(); err != nil {
+		return err
+	}
+	if rt.cron != nil {
+		if err := rt.cron.Reconfigure(cfg.Cron.Enabled, cfg.Cron.Timezone, cfg.Cron.MaxConcurrent, cfg.Cron.HistoryLimit); err != nil {
+			return err
+		}
+	}
+	rt.shell.Reconfigure(cfg.Terminal)
 	rt.cfg = cfg
 	rt.agent.SetConfig(cfg)
 
@@ -538,13 +744,12 @@ func (rt *runtimeServices) reload() error {
 	rt.agent.SetRAG(ragProvider)
 
 	packDir := config.Path("security-skills")
-	skillDirs := append(append([]string{}, cfg.Skills.Dirs...), "~/.antares/security-skills")
-	rt.skills = skills.NewManager(expandAll(skillDirs))
-	rt.skills.SetPackDirs([]string{packDir})
-	if err := rt.skills.Reload(); err != nil {
+	if err := rt.skills.Reconfigure(skills.Options{
+		Dirs: expandAll(cfg.Skills.Dirs), PackDirs: []string{packDir},
+		UserHome: rt.skillsHome, ProjectDir: rt.skillsProjectDir,
+	}); err != nil {
 		slog.Warn("some skills failed to load", "error", err)
 	}
-	rt.agent.SetSkills(rt.skills)
 
 	if cfg.Plugins.Enabled {
 		pluginMgr := plugin.NewManager(expandAll(cfg.Plugins.Dirs))
@@ -563,14 +768,55 @@ func (rt *runtimeServices) reload() error {
 	// The gateway holds its own pointer; without this it would keep reconciling
 	// against the configuration it was constructed with.
 	if rt.gateway != nil {
-		rt.gateway.SetConfig(cfg)
+		if err := rt.gateway.Reconcile(cfg); err != nil {
+			return err
+		}
+	}
+	if rt.mcp != nil && !reflect.DeepEqual(previous.MCP, cfg.MCP) {
+		rt.mcp.Refresh(context.Background(), cfg)
 	}
 
 	slog.Info("configuration reloaded", "model", cfg.Model.Default, "provider", cfg.Model.Provider)
 	return nil
 }
 
+// startSkillRefresh owns the one catalog worker for this runtime, including when
+// skills are loaded for the dashboard but disabled for agent prompts and tools.
+func (rt *runtimeServices) startSkillRefresh(ctx context.Context) {
+	if rt == nil {
+		return
+	}
+	rt.mu.Lock()
+	defer rt.mu.Unlock()
+	if rt.skills == nil || rt.skillsDone != nil {
+		return
+	}
+	ctx, rt.skillsCancel = context.WithCancel(ctx)
+	done := make(chan struct{})
+	rt.skillsDone = done
+	mgr := rt.skills
+	go func() {
+		defer close(done)
+		mgr.Watch(ctx, 5*time.Second)
+	}()
+}
+
+func (rt *runtimeServices) stopSkillRefresh() {
+	if rt == nil {
+		return
+	}
+	rt.mu.Lock()
+	cancel, done := rt.skillsCancel, rt.skillsDone
+	rt.mu.Unlock()
+	if cancel == nil {
+		return
+	}
+	cancel()
+	<-done
+}
+
 func (rt *runtimeServices) close() {
+	rt.stopSkillRefresh()
 	if rt.mcp != nil {
 		rt.mcp.Close()
 	}
@@ -608,9 +854,10 @@ func cmdServeForeground() error {
 		Social:  rt.social,
 	})
 
-	if rt.cfg.Cron.Enabled {
-		go rt.cron.Start(ctx)
+	if err := rt.cron.Reconfigure(rt.cfg.Cron.Enabled, rt.cfg.Cron.Timezone, rt.cfg.Cron.MaxConcurrent, rt.cfg.Cron.HistoryLimit); err != nil {
+		return err
 	}
+	go rt.cron.Start(ctx)
 	rt.gateway.Start(ctx)
 
 	// Reap idle shells so long-running servers do not leak processes.
@@ -622,7 +869,7 @@ func cmdServeForeground() error {
 			case <-ctx.Done():
 				return
 			case <-t.C:
-				rt.shell.ReapIdle(time.Duration(rt.cfg.Terminal.LifetimeSeconds) * time.Second)
+				rt.shell.ReapIdle(time.Duration(rt.agent.Config().Terminal.LifetimeSeconds) * time.Second)
 			}
 		}
 	}()

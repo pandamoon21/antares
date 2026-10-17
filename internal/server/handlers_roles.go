@@ -4,8 +4,8 @@ import (
 	"errors"
 	"net/http"
 
-	"github.com/DevKuroX/antares/internal/roles"
-	"github.com/DevKuroX/antares/internal/tools"
+	"github.com/pandamoon21/antares/internal/roles"
+	"github.com/pandamoon21/antares/internal/tools"
 )
 
 // handleRoles lists the specialist roles for the dashboard.

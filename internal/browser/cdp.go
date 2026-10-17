@@ -17,7 +17,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/DevKuroX/antares/internal/wsutil"
+	"github.com/pandamoon21/antares/internal/wsutil"
 )
 
 // Message is one CDP frame, either a reply to a command or an event.
@@ -101,7 +101,8 @@ func (c *conn) readLoop() {
 			}
 			c.eventsMu.Lock()
 			// Keep the tail only; a chatty page would otherwise grow forever.
-			list := append(c.events[m.Method], m.Params)
+			list := c.events[m.Method]
+			list = append(list, m.Params)
 			if len(list) > 200 {
 				list = list[len(list)-200:]
 			}

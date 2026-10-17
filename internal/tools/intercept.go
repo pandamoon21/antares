@@ -6,8 +6,8 @@ import (
 	"strings"
 	"sync"
 
-	"github.com/DevKuroX/antares/internal/config"
-	"github.com/DevKuroX/antares/internal/intercept"
+	"github.com/pandamoon21/antares/internal/config"
+	"github.com/pandamoon21/antares/internal/intercept"
 )
 
 // interceptState holds the process-wide MITM proxy so the tool and the dashboard

@@ -6,10 +6,10 @@ import (
 	"os/exec"
 	"strings"
 
-	"github.com/DevKuroX/antares/internal/agent"
-	"github.com/DevKuroX/antares/internal/autopilot"
-	"github.com/DevKuroX/antares/internal/config"
-	"github.com/DevKuroX/antares/internal/worktree"
+	"github.com/pandamoon21/antares/internal/agent"
+	"github.com/pandamoon21/antares/internal/autopilot"
+	"github.com/pandamoon21/antares/internal/config"
+	"github.com/pandamoon21/antares/internal/worktree"
 )
 
 // cmdAutopilot manages and runs the autopilot work queue.

@@ -5,9 +5,9 @@ import (
 	"net/http"
 	"time"
 
-	"github.com/DevKuroX/antares/internal/board"
-	"github.com/DevKuroX/antares/internal/config"
-	"github.com/DevKuroX/antares/internal/store"
+	"github.com/pandamoon21/antares/internal/board"
+	"github.com/pandamoon21/antares/internal/config"
+	"github.com/pandamoon21/antares/internal/store"
 )
 
 func boardStore() *board.Board { return board.New(config.Path("boards")) }

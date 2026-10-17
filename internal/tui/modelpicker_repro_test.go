@@ -5,7 +5,7 @@ import (
 
 	"github.com/charmbracelet/bubbles/viewport"
 
-	"github.com/DevKuroX/antares/internal/config"
+	"github.com/pandamoon21/antares/internal/config"
 )
 
 func TestModelPickerListsAllProviderModels(t *testing.T) {

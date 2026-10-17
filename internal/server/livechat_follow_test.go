@@ -5,7 +5,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/DevKuroX/antares/internal/agent"
+	"github.com/pandamoon21/antares/internal/agent"
 )
 
 // A client whose socket buffer is full stalls inside send with the run's lock

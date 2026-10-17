@@ -5,9 +5,9 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/DevKuroX/antares/internal/config"
-	"github.com/DevKuroX/antares/internal/store"
-	"github.com/DevKuroX/antares/internal/tools"
+	"github.com/pandamoon21/antares/internal/config"
+	"github.com/pandamoon21/antares/internal/store"
+	"github.com/pandamoon21/antares/internal/tools"
 )
 
 // The tool-call guardrail auto-continue hinges on incompleteTodos: it decides

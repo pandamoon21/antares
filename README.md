@@ -13,11 +13,12 @@ turns, and answers from Telegram and Discord — all from a single process you r
 on your own machine.
 
 ```
-antares            # terminal UI
-antares serve      # start API + dashboard in the background on :8787
-antares status     # show the background server status
-antares stop       # stop the background server
-antares setup      # configure it, in the browser or the terminal
+antares              # start API + dashboard in the background on :8787
+antares --foreground # run attached to this terminal (systemd, Docker, debug)
+antares tui          # open the terminal UI
+antares status       # show the background server status
+antares stop         # stop the background server
+antares setup        # configure it, in the browser or the terminal
 ```
 
 > [!NOTE]
@@ -59,8 +60,7 @@ Runs on **Linux**, **macOS**, and **Windows**.
 | Dashboard embedded in the binary | `make build` produces one file to copy anywhere. |
 | Hand-rolled WebSocket client | The Discord gateway is the only consumer; a small `internal/wsutil` beats a dependency. |
 
-Dependencies are deliberately few: a YAML parser, two database drivers. Everything
-else is the standard library.
+The standard library carries most of the weight — `net/http` routing, `database/sql`, `embed`. Direct dependencies are the ones with no reasonable in-tree substitute: `yaml.v3`, `pgx` and `modernc/sqlite`, an in-process HNSW graph, a browser-fingerprinted HTTP stack for `http_request`, the Bubble Tea stack for the TUI, and a few narrow utilities (SFTP, IMAP, PDF text extraction). Full list in `go.mod`.
 
 ---
 
@@ -86,7 +86,7 @@ irm https://raw.githubusercontent.com/enowdev/antares/main/scripts/install.ps1 |
 > and run `gh auth login` first — the installer uses it to fetch release assets.
 > Once the repo is public this is not needed.
 
-**From source** (to develop, or run an unreleased commit — needs Go 1.21+, Bun/npm, git):
+**From source** (to develop, or run an unreleased commit — needs Go 1.26+, Bun/npm, git):
 
 ```bash
 git clone https://github.com/enowdev/antares.git
@@ -129,15 +129,26 @@ are written to `~/.antares/logs/daemon.log`.
 
 ### Accessing it from another machine
 
-Both dev servers bind `0.0.0.0`, so a private-network address works directly:
+The production binary binds `127.0.0.1` by default. Inside a container the
+first boot seeds `server.host: 0.0.0.0` into `config.yaml` once so `docker
+run -p 8787:8787` and Kubernetes port-forwards reach it out of the box;
+later boots read the stored value verbatim so your edits stick. To expose
+the binary elsewhere, edit `server.host` in `config.yaml` or export
+`ANTARES_HOST` before starting. `ANTARES_HOST` is a per-process override
+applied on every load — it wins for the current run but is **not** written
+to disk, so unsetting it restores the stored value on the next boot. Vite
+also binds loopback in dev; set `HOST=0.0.0.0` to expose it on the LAN.
 
 ```
-http://<tailscale-ip>:5173     # dev
-http://<tailscale-ip>:8787     # production binary
+http://<tailscale-ip>:8787     # production binary, after editing server.host
+ANTARES_HOST=0.0.0.0 antares   # one-off exposure via env var; config.yaml is not changed
+HOST=0.0.0.0 make dev-web      # dev, exposed on the LAN
 ```
 
-Antares leaves the dashboard open when `server.auth_token` is empty, which is the
-right default behind a private network. Set the token to require a bearer token.
+A non-loopback bind still requires `server.auth_token`, a dashboard password,
+or an explicit `server.auth_disabled: true` — Antares refuses to start
+otherwise. The loopback default leaves the dashboard open, which is right on
+your own machine and safe behind a private network.
 
 ---
 
@@ -158,7 +169,9 @@ antares config path
 | `model.default` / `model.provider` | Which model answers |
 | `providers.*` | Endpoints and API keys |
 | `database.driver` | `sqlite`, `postgres`, or `memory` |
-| `tools.toolset` | Which tools the model gets: `minimal`, `coding`, `research`, `default`, `all` |
+| `tools.toolset` | Which tools the model gets: `minimal`, `coding` (default), `research`, `default`, `all` |
+| `tools.approval_mode` | `prompt` (default) asks before mutations; `auto` runs them; `deny` refuses them |
+| `max_concurrent_sessions` | Top-level turns allowed at once (default `4`; `0` is unlimited) |
 | `rag.embed_provider` / `rag.rerank_mode` | Native retrieval: embeddings (`voyage`, `openai`, custom) and rerank (`llm`, `api`, `off`) |
 | `gateway.telegram` / `gateway.discord` | Messaging bots |
 | `tools.browser` | The real-browser tool: executable, viewport, headed mode, stealth |
@@ -193,7 +206,9 @@ database:
   dsn: postgres://user:pass@localhost:5432/antares?sslmode=disable
 ```
 
-SQLite uses FTS5 for conversation search; Postgres uses `tsvector`. Both are
+SQLite uses FTS5 and Postgres uses `tsvector`/GIN for full-text search;
+RAG uses those same lexical indexes alongside a per-collection HNSW graph
+for dense vectors — no pgvector or other extension needed. Schemas are
 created automatically on first run.
 
 ---
@@ -249,18 +264,26 @@ the goal is really met and, if not, names the next step. See
 storage. Memories are injected into the system prompt on every turn, bounded by
 `memory.memory_char_limit`.
 
-**RAG.** Fully native, in-process — no external daemon. Embeds with your
-configured provider (Voyage, OpenAI, or any compatible endpoint), stores vectors
-in the Antares database, and runs a four-stage pipeline: hybrid recall (dense +
-lexical) → rerank (Voyage/API when available, else an auxiliary model, else off)
-→ near-duplicate compression → top-k. With `auto_context` on it indexes each
-conversation and pulls relevant knowledge into every turn; a project session can
-index its whole folder and keep it fresh as files change.
+**RAG.** Fully native, in-process — no external daemon or extra extension.
+Embeds with your configured provider (Voyage, OpenAI, or any compatible
+endpoint), stores vectors in the Antares database, and runs a four-stage
+pipeline: hybrid recall (a per-collection HNSW graph for dense similarity
+fused with FTS5/GIN lexical hits via reciprocal-rank fusion) → rerank
+(Voyage/API when available, else an auxiliary model, else off) →
+near-duplicate compression → top-k. The HNSW cache is built lazily on the
+first search per collection and invalidated by a persisted revision counter,
+so an out-of-process writer stays visible; on tiny collections (a few
+thousand low-dimensional vectors) a plain scan can beat it, and higher
+dimensions and larger corpora are where the graph earns its keep. With
+`auto_context` on it indexes each conversation and pulls relevant indexed
+knowledge into every turn; a project session can index its whole folder and
+keep it fresh as files change.
 
-**Skills.** Markdown files with YAML front matter in `~/.antares/skills`. The
-agent writes its own after solving something non-obvious; the catalogue (names
-and descriptions only) goes in the prompt, and full bodies are fetched on demand
-so the context stays small.
+**Skills.** Markdown procedures in configured Antares directories and twelve
+conventional user/project locations, discovered and refreshed automatically.
+Imported content is read-only; enable/disable preferences live in Antares config.
+Project chats use their own catalog. Names and descriptions go in the prompt; full bodies are fetched on
+demand. See [docs/skills.md](docs/skills.md) for paths, precedence, and refresh timing.
 
 **Scheduling.** A five-field cron parser plus `@daily`/`@every 90m` shorthands.
 Jobs are natural-language prompts that run unattended and can deliver their
@@ -321,16 +344,21 @@ only. The interface ships in English, Indonesian, Japanese, Chinese, and Russian
 make dev         # backend (Air) + frontend (Vite), both hot-reloading
 make dev-api     # backend only
 make dev-web     # frontend only
-make check       # go vet + go test + tsc
-make smoke       # load every dashboard route in a real browser
+make check       # go vet + go test + tsc + frontend regression tests
+make smoke       # build + fixture, then load every dashboard route in a real browser at desktop and mobile widths
 make build       # single binary with the dashboard embedded
 make doctor      # diagnose configuration and connectivity
 ```
 
 `make smoke` exists because two of the worst bugs so far passed every type
 check: a hook called from inside an effect, and the server bouncing SPA routes
-to `./`. Both blanked the entire dashboard. Loading each route in a real browser
-catches that class of failure; nothing static does.
+to `./`. Both blanked the entire dashboard. Loading each route in a real
+browser catches that class of failure; nothing static does. The route list is
+the shared manifest in `web/src/lib/routeManifest.ts`, so a new page cannot
+ship without also being smoke-checked. The run seeds an isolated fixture
+workspace + session, boots the server against a stubbed provider that refuses
+any real completion, and fails the whole pass if a page fires a background
+chat/embedding request.
 
 `antares doctor` checks the config file, workspace, database, provider
 credentials, and RAG backend in one pass.

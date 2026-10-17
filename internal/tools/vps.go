@@ -8,8 +8,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/DevKuroX/antares/internal/store"
-	"github.com/DevKuroX/antares/internal/vps"
+	"github.com/pandamoon21/antares/internal/store"
+	"github.com/pandamoon21/antares/internal/vps"
 )
 
 // ---- shared host resolution -------------------------------------------------

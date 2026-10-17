@@ -10,7 +10,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/DevKuroX/antares/internal/config"
+	"github.com/pandamoon21/antares/internal/config"
 )
 
 func TestDefaultShellDoesNotInheritNonPOSIXShell(t *testing.T) {

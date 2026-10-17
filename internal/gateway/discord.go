@@ -13,9 +13,9 @@ import (
 	"sync"
 	"time"
 
-	"github.com/DevKuroX/antares/internal/config"
-	"github.com/DevKuroX/antares/internal/version"
-	"github.com/DevKuroX/antares/internal/wsutil"
+	"github.com/pandamoon21/antares/internal/config"
+	"github.com/pandamoon21/antares/internal/version"
+	"github.com/pandamoon21/antares/internal/wsutil"
 )
 
 const discordAPI = "https://discord.com/api/v10"
@@ -86,7 +86,7 @@ func (d *Discord) rest(ctx context.Context, method, path string, payload, out an
 		return err
 	}
 	req.Header.Set("Authorization", "Bot "+d.cfg.BotToken)
-	req.Header.Set("User-Agent", "DiscordBot (https://github.com/DevKuroX/antares, "+version.Version+")")
+	req.Header.Set("User-Agent", "DiscordBot (https://github.com/pandamoon21/antares, "+version.Version+")")
 	if payload != nil {
 		req.Header.Set("Content-Type", "application/json")
 	}

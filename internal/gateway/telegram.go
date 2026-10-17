@@ -13,8 +13,8 @@ import (
 	"sync"
 	"time"
 
-	"github.com/DevKuroX/antares/internal/config"
-	"github.com/DevKuroX/antares/internal/version"
+	"github.com/pandamoon21/antares/internal/config"
+	"github.com/pandamoon21/antares/internal/version"
 )
 
 // Telegram talks to the Bot API over long polling, so no public domain or

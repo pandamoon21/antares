@@ -30,9 +30,9 @@ VERSION="${VERSION:-$(git describe --tags --always --dirty 2>/dev/null || echo 0
 COMMIT="$(git rev-parse --short HEAD 2>/dev/null || echo dev)"
 DATE="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
 LDFLAGS="-s -w \
-  -X github.com/enowdev/antares/internal/version.Version=$VERSION \
-  -X github.com/enowdev/antares/internal/version.Commit=$COMMIT \
-  -X github.com/enowdev/antares/internal/version.Date=$DATE"
+  -X github.com/pandamoon21/antares/internal/version.Version=$VERSION \
+  -X github.com/pandamoon21/antares/internal/version.Commit=$COMMIT \
+  -X github.com/pandamoon21/antares/internal/version.Date=$DATE"
 
 # os/arch pairs to ship. GOOS GOARCH.
 TARGETS=(
@@ -53,6 +53,7 @@ info "building the dashboard"
 ( cd web && $BUN install && $BUN run build )
 rm -rf internal/server/dist
 cp -r web/dist internal/server/dist
+touch internal/server/dist/.gitkeep
 
 rm -rf "$OUT"
 mkdir -p "$OUT"

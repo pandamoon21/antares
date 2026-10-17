@@ -3,9 +3,9 @@ package server
 import (
 	"context"
 	"encoding/json"
-	"github.com/DevKuroX/antares/internal/agent"
-	"github.com/DevKuroX/antares/internal/config"
-	"github.com/DevKuroX/antares/internal/mcp"
+	"github.com/pandamoon21/antares/internal/agent"
+	"github.com/pandamoon21/antares/internal/config"
+	"github.com/pandamoon21/antares/internal/mcp"
 	"net/http"
 	"net/http/httptest"
 	"strings"

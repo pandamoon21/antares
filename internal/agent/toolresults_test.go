@@ -6,7 +6,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/DevKuroX/antares/internal/llm"
+	"github.com/pandamoon21/antares/internal/llm"
 )
 
 func toolIDs(msgs []llm.Message) []string {

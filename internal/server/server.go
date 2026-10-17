@@ -19,15 +19,15 @@ import (
 	"sync"
 	"time"
 
-	"github.com/DevKuroX/antares/internal/agent"
-	"github.com/DevKuroX/antares/internal/config"
-	"github.com/DevKuroX/antares/internal/cron"
-	"github.com/DevKuroX/antares/internal/gateway"
-	"github.com/DevKuroX/antares/internal/mcp"
-	"github.com/DevKuroX/antares/internal/skills"
-	"github.com/DevKuroX/antares/internal/socialbrowser"
-	"github.com/DevKuroX/antares/internal/store"
-	"github.com/DevKuroX/antares/internal/version"
+	"github.com/pandamoon21/antares/internal/agent"
+	"github.com/pandamoon21/antares/internal/config"
+	"github.com/pandamoon21/antares/internal/cron"
+	"github.com/pandamoon21/antares/internal/gateway"
+	"github.com/pandamoon21/antares/internal/mcp"
+	"github.com/pandamoon21/antares/internal/skills"
+	"github.com/pandamoon21/antares/internal/socialbrowser"
+	"github.com/pandamoon21/antares/internal/store"
+	"github.com/pandamoon21/antares/internal/version"
 )
 
 // Server wires the API handlers to the agent and store.
@@ -55,6 +55,9 @@ type Server struct {
 
 	mu       sync.RWMutex
 	reloadFn func() error
+	// skillsConfigMu serializes skill preference writes through live publication,
+	// so concurrent toggles cannot overwrite one another or publish out of order.
+	skillsConfigMu sync.Mutex
 
 	// dashSessions holds active dashboard login session tokens (cookie value →
 	// expiry). Guarded by its own mutex; cleared when the password changes.
@@ -64,7 +67,8 @@ type Server struct {
 	// requests from both passing the setup check before either saves.
 	setupMu sync.Mutex
 	// passwordMu serializes first-password creation and password replacement.
-	passwordMu sync.Mutex
+	passwordMu      sync.Mutex
+	creatorConfigMu sync.Mutex
 }
 
 // Options configures a Server.
@@ -105,6 +109,12 @@ func New(o Options) *Server {
 		reloadFn: o.Reload,
 
 		dashSessions: map[string]time.Time{},
+	}
+	// An embedded server may have no agent-owned manager. Seed its fallback
+	// manager from the supplied config so administrative reads are correct from
+	// the first request rather than only after a reload.
+	if s.skills != nil && (s.agent == nil || s.agent.Skills() == nil) && s.cfg != nil {
+		s.skills.SetDisabled(s.cfg.Skills.Disabled)
 	}
 	// Restore dashboard logins so a daemon restart does not break EventSource
 	// reattach (/api/chat/attach) for browsers that still hold a valid cookie.

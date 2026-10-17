@@ -11,7 +11,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/DevKuroX/antares/internal/config"
+	"github.com/pandamoon21/antares/internal/config"
 )
 
 // computerTool controls the desktop GUI — screenshots, mouse, and keyboard —

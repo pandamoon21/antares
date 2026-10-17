@@ -6,7 +6,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/DevKuroX/antares/internal/findings"
+	"github.com/pandamoon21/antares/internal/findings"
 )
 
 // reportFindingTool records a security finding into the engagement ledger, so

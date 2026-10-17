@@ -8,10 +8,10 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/DevKuroX/antares/internal/backup"
-	"github.com/DevKuroX/antares/internal/config"
-	"github.com/DevKuroX/antares/internal/store"
-	"github.com/DevKuroX/antares/internal/version"
+	"github.com/pandamoon21/antares/internal/backup"
+	"github.com/pandamoon21/antares/internal/config"
+	"github.com/pandamoon21/antares/internal/store"
+	"github.com/pandamoon21/antares/internal/version"
 )
 
 func cmdBackup(args []string) error {

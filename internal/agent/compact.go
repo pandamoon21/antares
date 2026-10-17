@@ -8,10 +8,11 @@ import (
 	"strings"
 	"unicode/utf8"
 
-	"github.com/DevKuroX/antares/internal/llm"
-	"github.com/DevKuroX/antares/internal/providers"
-	"github.com/DevKuroX/antares/internal/store"
-	"github.com/DevKuroX/antares/internal/textutil"
+	"github.com/pandamoon21/antares/internal/config"
+	"github.com/pandamoon21/antares/internal/llm"
+	"github.com/pandamoon21/antares/internal/providers"
+	"github.com/pandamoon21/antares/internal/store"
+	"github.com/pandamoon21/antares/internal/textutil"
 )
 
 // contextWindowFor returns the active model's token budget for the usage event.
@@ -21,20 +22,80 @@ import (
 // sane fallback. It mirrors the window maybeCompact governs, so the UI's
 // "context full" bar agrees with compaction.
 func (a *Agent) contextWindowFor(model string) int {
-	if a.config() != nil {
-		for _, p := range a.config().Providers {
-			if m, ok := p.ModelMeta[model]; ok && m.ContextWindow > 0 {
-				return m.ContextWindow
+	cfg := a.config()
+	if cfg == nil || model == "" {
+		return 128000
+	}
+	candidates := candidateProvidersForModel(cfg, model)
+	// First pass: strict provider/id lookup.
+	for _, providerID := range candidates {
+		p := cfg.Providers[providerID]
+		if m, ok := p.ModelMeta[model]; ok && m.ContextWindow > 0 {
+			return m.ContextWindow
+		}
+		if meta, ok := providers.MetaByProvider(providerID, model); ok && meta.ContextWindow > 0 {
+			return meta.ContextWindow
+		}
+	}
+	// Second pass: proxy fallback for openai-compatible providers that
+	// re-serve official models under real ids.
+	for _, providerID := range candidates {
+		kind := cfg.Providers[providerID].Kind
+		if kind != "openai-compatible" && kind != "custom" {
+			continue
+		}
+		if meta, ok := providers.MetaByAnyProvider(model); ok && meta.ContextWindow > 0 {
+			return meta.ContextWindow
+		}
+	}
+	if w := legacyCuratedWindow(model); w > 0 {
+		return w
+	}
+	if cfg.Model.ContextWindow > 0 {
+		return cfg.Model.ContextWindow
+	}
+	return 128000
+}
+// candidateProvidersForModel mirrors the server's candidateProviders: active
+// provider first, then any provider whose Models list *or* ModelMeta keys
+// mention the id. A provider that carries a per-model meta entry has clearly
+// claimed the model even if it never added the id to Models.
+func candidateProvidersForModel(cfg *config.Config, model string) []string {
+	seen := map[string]bool{}
+	var out []string
+	push := func(id string) {
+		if id == "" || seen[id] {
+			return
+		}
+		seen[id] = true
+		out = append(out, id)
+	}
+	push(cfg.Model.Provider)
+	for providerID, p := range cfg.Providers {
+		if _, ok := p.ModelMeta[model]; ok {
+			push(providerID)
+			continue
+		}
+		for _, m := range p.Models {
+			if m == model {
+				push(providerID)
+				break
 			}
 		}
 	}
-	if w := providers.ContextWindow(model); w > 0 {
-		return w
+	return out
+}
+
+// legacyCuratedWindow reaches into providers.ContextWindow only for the
+// curated map's hits. Since providers.ContextWindow now delegates to Meta()
+// (which can loose-match across the generated table), we accept a value only
+// if it came from the curated layer. A miss is reported as 0.
+func legacyCuratedWindow(model string) int {
+	m, ok := providers.Meta(model)
+	if !ok || m.Source != "curated" {
+		return 0
 	}
-	if a.config() != nil && a.config().Model.ContextWindow > 0 {
-		return a.config().Model.ContextWindow
-	}
-	return 128000
+	return m.ContextWindow
 }
 
 // maybeCompact summarises older turns once the conversation approaches the
@@ -261,7 +322,9 @@ func (a *Agent) persistContextCompact(ctx context.Context, sess *store.Session, 
 	}
 	visible := make([]store.Message, 0, len(rows))
 	for _, r := range rows {
-		if r.Hidden {
+		// Mirror loadHistory: hidden rows and persisted failures are not part of
+		// the model-facing history, so they must not shift the compact boundary.
+		if r.Hidden || isPersistedTurnError(r) {
 			continue
 		}
 		visible = append(visible, r)

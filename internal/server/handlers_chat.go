@@ -13,10 +13,10 @@ import (
 	"strings"
 	"time"
 
-	"github.com/DevKuroX/antares/internal/agent"
-	"github.com/DevKuroX/antares/internal/llm"
-	"github.com/DevKuroX/antares/internal/store"
-	"github.com/DevKuroX/antares/internal/version"
+	"github.com/pandamoon21/antares/internal/agent"
+	"github.com/pandamoon21/antares/internal/llm"
+	"github.com/pandamoon21/antares/internal/store"
+	"github.com/pandamoon21/antares/internal/version"
 )
 
 var errNotFound = errors.New("not found")
@@ -34,8 +34,7 @@ func (s *Server) handleStatus(w http.ResponseWriter, r *http.Request) {
 
 	// Provider readiness is a config check, not a live call: the status pill
 	// polls every ten seconds and must not bill the user for pings.
-	_, provider := cfg.ResolveProvider(cfg.Model.Provider)
-	ready := cfg.Model.Default != "" && (provider.APIKey != "" || isLocalEndpoint(provider.BaseURL))
+	ready := !NeedsSetup(cfg)
 
 	writeJSON(w, http.StatusOK, map[string]any{
 		"ok":              true,

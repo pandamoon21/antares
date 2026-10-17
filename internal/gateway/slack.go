@@ -12,8 +12,8 @@ import (
 	"sync"
 	"time"
 
-	"github.com/DevKuroX/antares/internal/config"
-	"github.com/DevKuroX/antares/internal/wsutil"
+	"github.com/pandamoon21/antares/internal/config"
+	"github.com/pandamoon21/antares/internal/wsutil"
 )
 
 const slackAPI = "https://slack.com/api"

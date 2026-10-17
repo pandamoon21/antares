@@ -5,9 +5,9 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/DevKuroX/antares/internal/config"
-	"github.com/DevKuroX/antares/internal/engagement"
-	"github.com/DevKuroX/antares/internal/findings"
+	"github.com/pandamoon21/antares/internal/config"
+	"github.com/pandamoon21/antares/internal/engagement"
+	"github.com/pandamoon21/antares/internal/findings"
 )
 
 func TestMethodologyBlockEmptyUntilEngagement(t *testing.T) {

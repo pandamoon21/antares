@@ -12,7 +12,7 @@ import (
 	"strings"
 	"unicode/utf8"
 
-	"github.com/DevKuroX/antares/internal/textutil"
+	"github.com/pandamoon21/antares/internal/textutil"
 )
 
 // ---- glob -------------------------------------------------------------------

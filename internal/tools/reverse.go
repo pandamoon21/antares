@@ -12,7 +12,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/DevKuroX/antares/internal/depcheck"
+	"github.com/pandamoon21/antares/internal/depcheck"
 )
 
 // Native reverse-engineering toolset. Binary triage (format, architecture,

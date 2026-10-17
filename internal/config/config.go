@@ -33,6 +33,7 @@ type Config struct {
 	Security      Security            `yaml:"security" json:"security"`
 	OSINT         OSINT               `yaml:"osint" json:"osint"`
 	ImageGen      ImageGen            `yaml:"image_gen" json:"image_gen"`
+	VideoGen      VideoGen            `yaml:"video_gen" json:"video_gen"`
 	Cron          Cron                `yaml:"cron" json:"cron"`
 	Autopilot     Autopilot           `yaml:"autopilot" json:"autopilot"`
 	Gateway       Gateway             `yaml:"gateway" json:"gateway"`
@@ -179,6 +180,14 @@ type Agent struct {
 	VerifyMax int `yaml:"verify_max" json:"verify_max"`
 	// GoalMaxIterations bounds a standing goal so it cannot run forever.
 	GoalMaxIterations int `yaml:"goal_max_iterations" json:"goal_max_iterations"`
+	// GoalAutonomousMaxIterations is the default iteration cap for a "confident"
+	// autonomous goal (`/goal auto`), which keeps working across turns on its
+	// own. It is separate from — and normally higher than — GoalMaxIterations
+	// because an autonomous goal is expected to run much longer unattended. A
+	// per-goal cap of 0 means unlimited; this default only applies when the goal
+	// did not set its own. At the cap the goal pauses (resumable), it does not
+	// stop.
+	GoalAutonomousMaxIterations int `yaml:"goal_autonomous_max_iterations" json:"goal_autonomous_max_iterations"`
 	// WrapUntrustedOutput fences tool output that carries external content
 	// (web pages, HTTP bodies, MCP results) so the model treats it as data and
 	// not as instructions — a defence against prompt injection. On by default.
@@ -634,6 +643,8 @@ type Plugins struct {
 type Skills struct {
 	Enabled               bool     `yaml:"enabled" json:"enabled"`
 	Dirs                  []string `yaml:"dirs" json:"dirs"`
+	Disabled              []string `yaml:"disabled" json:"disabled"`
+	FrontmatterMigrated   bool     `yaml:"frontmatter_migrated" json:"frontmatter_migrated"`
 	CreationNudgeInterval int      `yaml:"creation_nudge_interval" json:"creation_nudge_interval"`
 	AutoCreate            bool     `yaml:"auto_create" json:"auto_create"`
 	HubSources            []string `yaml:"hub_sources" json:"hub_sources"`

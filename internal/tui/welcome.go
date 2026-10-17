@@ -6,7 +6,7 @@ import (
 
 	"github.com/charmbracelet/lipgloss"
 
-	"github.com/DevKuroX/antares/internal/version"
+	"github.com/pandamoon21/antares/internal/version"
 )
 
 // showWelcome reports whether the animated splash should fill the viewport. It

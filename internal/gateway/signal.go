@@ -11,7 +11,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/DevKuroX/antares/internal/config"
+	"github.com/pandamoon21/antares/internal/config"
 )
 
 // Signal talks to a signal-cli REST API daemon that the user runs. It polls the

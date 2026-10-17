@@ -22,7 +22,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/DevKuroX/antares/internal/browser"
+	"github.com/pandamoon21/antares/internal/browser"
 )
 
 //go:embed data/scanner.js

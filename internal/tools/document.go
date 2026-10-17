@@ -11,7 +11,7 @@ import (
 	"regexp"
 	"strings"
 
-	"github.com/DevKuroX/antares/internal/config"
+	"github.com/pandamoon21/antares/internal/config"
 	"github.com/ledongthuc/pdf"
 )
 

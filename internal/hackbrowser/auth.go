@@ -23,7 +23,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/DevKuroX/antares/internal/browser"
+	"github.com/pandamoon21/antares/internal/browser"
 )
 
 var authLog = Log.Create("hackbrowser:auth")
